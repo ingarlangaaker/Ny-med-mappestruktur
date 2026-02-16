@@ -5,70 +5,207 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0a1a12" />
   <title>Farmapp</title>
+
   <style>
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#07150f;color:#e9fff5}
-    .wrap{padding:14px}
-    .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:14px}
-    .muted{color:#9fc7b6;font-size:12px;line-height:1.35}
-    pre{white-space:pre-wrap;word-break:break-word;background:#0b1b13;border:1px solid rgba(255,255,255,.12);padding:12px;border-radius:12px;color:#e9fff5}
-    .ok{color:#18c46c;font-weight:900}
-    .bad{color:#ff5c5c;font-weight:900}
+    :root{
+      --bg:#07150f;
+      --card:#0f241a;
+      --text:#e9fff5;
+      --muted:#9fc7b6;
+      --accent:#18c46c;
+      --danger:#ff5c5c;
+      --radius:18px;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    *{ box-sizing:border-box; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; }
+    body{
+      margin:0;
+      color:var(--text);
+      background:radial-gradient(1200px 800px at 30% 0%, #0b2519 0%, var(--bg) 55%);
+    }
+
+    .app{ min-height:100vh; display:grid; grid-template-rows:auto 1fr; }
+
+    header{
+      position:sticky; top:0; z-index:50;
+      backdrop-filter:saturate(1.1) blur(6px);
+      background:linear-gradient(180deg, rgba(7,21,15,.92), rgba(7,21,15,.72));
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }
+    .topbar{
+      display:flex; gap:12px; align-items:center; justify-content:space-between;
+      padding:12px 12px 10px 12px;
+    }
+    .brand{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .brand .t{ font-weight:900; letter-spacing:.2px; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .brand .s{ font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .pill{
+      font-size:12px; color:rgba(233,255,245,.92);
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(0,0,0,.22);
+      padding:6px 10px; border-radius:999px; white-space:nowrap;
+    }
+
+    .main{
+      display:grid;
+      grid-template-columns: 220px 1fr;
+      gap:12px;
+      padding:12px;
+      align-items:start;
+    }
+    @media (max-width: 920px){
+      .main{ grid-template-columns: 1fr; }
+      nav#nav{ position:sticky; top:64px; z-index:40; }
+    }
+
+    /* NAV: tett, ikke gjennomsiktig */
+    nav#nav{
+      border-radius:var(--radius);
+      background:#0b1b13;
+      border:1px solid rgba(255,255,255,.10);
+      box-shadow: var(--shadow);
+      padding:10px;
+      display:grid;
+      gap:8px;
+    }
+
+    /* Buttons (brukes av app.js) */
+    .btn{
+      width:100%;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:11px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.10);
+      color:inherit;
+      cursor:pointer;
+      font-weight:700;
+    }
+    .btn:hover{ background: rgba(255,255,255,.14); }
+    .btn.primary{ background:#0f2a1f; border-color: rgba(24,196,108,.60); }
+    .btn.danger{ background:#3a1a1a; border-color: rgba(255,92,92,.60); }
+
+    .panel{
+      border-radius:var(--radius);
+      background: rgba(15,36,26,.92);
+      border:1px solid rgba(255,255,255,.10);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .panelHead{
+      padding:14px 14px 10px 14px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }
+    #viewTitle{ font-weight:900; font-size:18px; margin:0; }
+    #viewSub{ margin-top:6px; color:var(--muted); font-size:12px; line-height:1.35; }
+    #actions{
+      display:flex; gap:10px; flex-wrap:wrap;
+      padding:12px 14px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }
+    #actions .btn{ width:auto; }
+    #view{ padding:14px; }
+
+    /* app.js bruker disse */
+    .card{
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.16);
+      overflow:hidden;
+    }
+    .notice{
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.18);
+      padding:14px;
+    }
+    .muted{ color: var(--muted); }
+
+    /* Crash overlay (hvis noe feiler senere) */
+    .crash{
+      position:fixed; inset:0;
+      background:rgba(0,0,0,.65);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:14px;
+      z-index:9999;
+    }
+    .crashBox{
+      width:min(720px, 100%);
+      background:#0b1b13;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:18px;
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .crashHead{ padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900; color:var(--danger); }
+    .crashBody{ padding:14px; }
+    pre{ margin:0; white-space:pre-wrap; word-break:break-word; background:#07150f; border:1px solid rgba(255,255,255,.12); padding:12px; border-radius:12px; }
   </style>
 </head>
+
 <body>
-  <div class="wrap">
-    <div class="card">
-      <div style="font-weight:900;font-size:18px">Farmapp – feilsøk</div>
-      <div class="muted">Hvis appen krasjer, vises feilen under.</div>
-      <div id="status" class="muted" style="margin-top:10px">Starter…</div>
-      <div id="errbox" style="margin-top:12px; display:none;">
-        <div class="bad">Feil</div>
-        <pre id="err"></pre>
+  <div class="app">
+    <header>
+      <div class="topbar">
+        <div class="brand">
+          <div class="t">Farmapp</div>
+          <div class="s">Profesjonell gårdslogg</div>
+        </div>
+        <div id="pillStatus" class="pill">Starter…</div>
+      </div>
+    </header>
+
+    <div class="main">
+      <!-- VIKTIG: tom nav. app.js (rebuildNav) fyller denne -->
+      <nav id="nav"></nav>
+
+      <div class="panel">
+        <div class="panelHead">
+          <h1 id="viewTitle"></h1>
+          <div id="viewSub"></div>
+        </div>
+        <div id="actions"></div>
+        <div id="view"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Crash overlay -->
+  <div id="crash" class="crash">
+    <div class="crashBox">
+      <div class="crashHead">Feil i appen</div>
+      <div class="crashBody">
+        <div class="muted" style="margin-bottom:10px">Kopiér teksten under og send til meg.</div>
+        <pre id="crashText"></pre>
       </div>
     </div>
   </div>
 
   <script>
-    const statusEl = document.getElementById("status");
-    const errBox = document.getElementById("errbox");
-    const errEl = document.getElementById("err");
+    const crash = document.getElementById("crash");
+    const crashText = document.getElementById("crashText");
 
-    function showErr(msg){
-      errEl.textContent = String(msg || "Ukjent feil");
-      errBox.style.display = "block";
-      statusEl.innerHTML = '<span class="bad">Krasjet.</span>';
+    function showCrash(msg){
+      crashText.textContent = String(msg || "Ukjent feil");
+      crash.style.display = "flex";
     }
-
     window.addEventListener("error", (e) => {
-      showErr((e?.message || "JS error") + "\n\n" + (e?.filename || "") + ":" + (e?.lineno || "") + ":" + (e?.colno || ""));
+      showCrash((e?.message || "JS error") + "\n\n" + (e?.filename || "") + ":" + (e?.lineno || "") + ":" + (e?.colno || ""));
     });
-
     window.addEventListener("unhandledrejection", (e) => {
       const r = e?.reason;
-      showErr("Unhandled promise rejection:\n\n" + (r?.stack || r?.message || String(r)));
+      showCrash("Unhandled promise rejection:\n\n" + (r?.stack || r?.message || String(r)));
     });
   </script>
 
   <script type="module">
-    const statusEl = document.getElementById("status");
-    const showErr = (msg) => {
-      document.getElementById("err").textContent = String(msg || "Ukjent feil");
-      document.getElementById("errbox").style.display = "block";
-      statusEl.innerHTML = '<span class="bad">Krasjet.</span>';
-    };
-
-    try{
-      statusEl.innerHTML = '<span class="muted">Laster modules/app.js…</span>';
-      const mod = await import("./modules/app.js?v=" + Date.now()); // cache-bust
-      if (!mod || typeof mod.boot !== "function") {
-        throw new Error("Fant ikke boot() i modules/app.js");
-      }
-      statusEl.innerHTML = '<span class="ok">app.js lastet. Kjører boot()…</span>';
-      await mod.boot();
-      statusEl.innerHTML = '<span class="ok">boot() kjørt. Hvis du fortsatt ser bare denne siden, feiler UI/DOM-id’er.</span>';
-    }catch(e){
-      showErr(e?.stack || e?.message || String(e));
-    }
+    import { boot } from "./modules/app.js?v=" + Date.now(); // cache-bust
+    boot();
   </script>
 </body>
 </html>
