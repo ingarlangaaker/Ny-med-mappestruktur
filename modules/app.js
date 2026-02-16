@@ -1,6 +1,7 @@
 // modules/app.js
 // Core boot-fil for Farmapp
 // storage.js (data) + ui.js (dialoger) + router.js (navigasjon)
+// Stor oppdatering: Skifter under "Min gård" (CRUD + summering)
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
 import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml } from "./ui.js";
@@ -28,16 +29,30 @@ export async function boot() {
     return JSON.parse(JSON.stringify(obj));
   }
 
+  function ensureDataShape(d) {
+    d.farm = d.farm || { name: "", kommune: "", areal: 0 };
+    d.skifter = Array.isArray(d.skifter) ? d.skifter : [];
+    d.husdyr = Array.isArray(d.husdyr) ? d.husdyr : [];
+    d.fertilizerLog = Array.isArray(d.fertilizerLog) ? d.fertilizerLog : [];
+    d.plantProtectionLog = Array.isArray(d.plantProtectionLog) ? d.plantProtectionLog : [];
+    return d;
+  }
+
+  data = ensureDataShape(data);
+
   function persist() {
     const ok = saveData(data);
     pill.textContent = ok ? "Klar" : "Kunne ikke lagre";
     return ok;
   }
 
+  // ---- Router ----
+  const router = createRouter({ navEl, titleEl, subEl, actionsEl, viewEl });
+
   function setData(next) {
-    data = next;
+    data = ensureDataShape(next);
     persist();
-    router.setCtx(ctx());  // oppdater kontekst
+    router.setCtx(ctx());
     router.rerender();
   }
 
@@ -50,16 +65,95 @@ export async function boot() {
     };
   }
 
-  // ---- Router ----
-  const router = createRouter({
-    navEl,
-    titleEl,
-    subEl,
-    actionsEl,
-    viewEl
-  });
-
   router.setCtx(ctx());
+
+  // ---- Utils ----
+  function toNumber(v) {
+    const s = String(v ?? "").trim().replace(",", ".");
+    const n = Number(s);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  function sumSkifter(skifter) {
+    const out = {
+      total: 0,
+      fulldyrket: 0,
+      overflatedyrket: 0,
+      innmarksbeite: 0
+    };
+    for (const s of skifter || []) {
+      const a = Number(s.areal || 0);
+      out.total += a;
+      if (s.type === "fulldyrket") out.fulldyrket += a;
+      else if (s.type === "overflatedyrket") out.overflatedyrket += a;
+      else if (s.type === "innmarksbeite") out.innmarksbeite += a;
+    }
+    return out;
+  }
+
+  function typeLabel(t) {
+    if (t === "fulldyrket") return "Fulldyrket";
+    if (t === "overflatedyrket") return "Overflatedyrket";
+    if (t === "innmarksbeite") return "Innmarksbeite";
+    return "Ukjent";
+  }
+
+  async function askSkifteFields(initial = {}) {
+    // Vi bruker flere små dialoger (stabilt på mobil)
+    const navn = await promptDialog({
+      title: "Skifte",
+      subtitle: "Navn / ID",
+      label: "Skiftenavn",
+      value: initial.navn || "",
+      placeholder: "F.eks. Skifte 1",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (navn === null) return null;
+
+    const arealTxt = await promptDialog({
+      title: "Skifte",
+      subtitle: "Areal i dekar",
+      label: "Areal (dekar)",
+      value: initial.areal != null ? String(initial.areal) : "",
+      placeholder: "F.eks. 12,5",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (arealTxt === null) return null;
+
+    const areal = toNumber(arealTxt);
+    if (!Number.isFinite(areal) || areal <= 0) {
+      toast("Ugyldig areal. Bruk et positivt tall (f.eks. 12 eller 12,5).");
+      return null;
+    }
+
+    // Type velges via enkel tekst (robust) – vi kan senere gjøre dette til dropdown i ui.js
+    const typeTxt = await promptDialog({
+      title: "Skifte",
+      subtitle: "Type areal",
+      label: "Skriv: fulldyrket / overflatedyrket / innmarksbeite",
+      value: initial.type || "fulldyrket",
+      placeholder: "fulldyrket",
+      okText: "Lagre",
+      cancelText: "Avbryt"
+    });
+    if (typeTxt === null) return null;
+
+    const t = String(typeTxt).trim().toLowerCase();
+    const allowed = ["fulldyrket", "overflatedyrket", "innmarksbeite"];
+    if (!allowed.includes(t)) {
+      toast("Ugyldig type. Bruk: fulldyrket / overflatedyrket / innmarksbeite");
+      return null;
+    }
+
+    return {
+      id: initial.id || ("s_" + Math.random().toString(16).slice(2) + Date.now().toString(16)),
+      navn: String(navn).trim(),
+      areal: areal,
+      type: t
+    };
+  }
 
   // =========================
   // VIEWS
@@ -123,14 +217,22 @@ export async function boot() {
     ],
     render(container, { data: d }) {
       const farm = d.farm || {};
+      const s = sumSkifter(d.skifter);
+
       container.innerHTML = `
         <div class="notice">
           <div style="font-weight:700; margin-bottom:6px; color:#e8f0f7;">Status</div>
           <div><b>Gård:</b> ${escapeHtml(farm.name || "Ikke satt")}</div>
           <div><b>Kommune:</b> ${escapeHtml(farm.kommune || "Ikke satt")}</div>
           <div><b>Areal (dekar):</b> ${Number(farm.areal || 0)}</div>
-          <div style="margin-top:10px;">
-            Bruk menyen til venstre. URL støtter direkte lenker, f.eks. <b>#dashboard</b>.
+
+          <div style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.10);">
+            <div style="font-weight:700; margin-bottom:6px; color:#e8f0f7;">Skifter</div>
+            <div><b>Antall:</b> ${d.skifter?.length || 0}</div>
+            <div><b>Totalt (dekar):</b> ${round1(s.total)}</div>
+            <div class="muted" style="margin-top:6px; font-size:12px;">
+              Fulldyrket: ${round1(s.fulldyrket)} • Overflatedyrket: ${round1(s.overflatedyrket)} • Innmarksbeite: ${round1(s.innmarksbeite)}
+            </div>
           </div>
         </div>
       `;
@@ -139,19 +241,27 @@ export async function boot() {
 
   router.registerView("minGård", {
     title: "Min gård",
-    subtitle: "Grunninfo + sjeldne innstillinger",
+    subtitle: "Grunninfo + Skifter (sjeldne endringer)",
     actions: () => [
       {
-        label: "Lagre",
+        label: "Legg til skifte",
         primary: true,
         onClick: async ({ data, setData }) => {
-          const nameEl = document.getElementById("farm_name");
-          const kommuneEl = document.getElementById("farm_kommune");
-          const arealEl = document.getElementById("farm_areal");
-
-          const name = (nameEl?.value ?? "").trim();
-          const kommune = (kommuneEl?.value ?? "").trim();
-          const arealRaw = String(arealEl?.value ?? "0").trim().replace(",", ".");
+          const sk = await askSkifteFields({});
+          if (!sk) return;
+          const next = clone(data);
+          next.skifter = Array.isArray(next.skifter) ? next.skifter : [];
+          next.skifter.push(sk);
+          setData(next);
+          toast("Skifte lagt til.");
+        }
+      },
+      {
+        label: "Lagre gårdsinfo",
+        onClick: async ({ data, setData }) => {
+          const name = (document.getElementById("farm_name")?.value ?? "").trim();
+          const kommune = (document.getElementById("farm_kommune")?.value ?? "").trim();
+          const arealRaw = String(document.getElementById("farm_areal")?.value ?? "0").trim().replace(",", ".");
           const areal = Number(arealRaw);
 
           if (!Number.isFinite(areal) || areal < 0) {
@@ -166,16 +276,18 @@ export async function boot() {
           next.farm.areal = areal;
 
           setData(next);
-          toast("Lagret.");
+          toast("Gårdsinfo lagret.");
         }
       }
     ],
     render(container, { data: d, setData }) {
       const farm = d.farm || {};
+      const skifter = Array.isArray(d.skifter) ? d.skifter : [];
+      const s = sumSkifter(skifter);
 
       container.innerHTML = `
         <div class="notice">
-          <div style="font-weight:700; margin-bottom:10px; color:#e8f0f7;">Oppsett</div>
+          <div style="font-weight:700; margin-bottom:10px; color:#e8f0f7;">Grunninfo</div>
 
           <div style="display:grid; gap:10px;">
             <div>
@@ -194,13 +306,52 @@ export async function boot() {
             </div>
 
             <button id="farm_save" class="btn primary" style="width:100%; justify-content:center;">
-              Lagre
+              Lagre gårdsinfo
             </button>
-
-            <div class="muted" style="font-size:12px; line-height:1.35;">
-              Dette er området for sjeldne endringer (slik du ønsket). Skifter legges her senere.
-            </div>
           </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <div>
+              <div style="font-weight:800;">Skifter</div>
+              <div class="muted" style="font-size:12px; margin-top:4px;">
+                Totalt: ${round1(s.total)} daa • Fulldyrket: ${round1(s.fulldyrket)} • Overflatedyrket: ${round1(s.overflatedyrket)} • Innmarksbeite: ${round1(s.innmarksbeite)}
+              </div>
+            </div>
+            <button id="skifte_add" class="btn primary">Legg til</button>
+          </div>
+
+          <div style="padding:14px;">
+            ${skifter.length === 0 ? `
+              <div class="notice">
+                Ingen skifter ennå. Trykk <b>Legg til</b>.
+              </div>
+            ` : `
+              <div style="display:grid; gap:10px;">
+                ${skifter.map((sk) => `
+                  <div style="border:1px solid rgba(255,255,255,.10); border-radius:14px; padding:12px; background:rgba(255,255,255,.03);">
+                    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
+                      <div>
+                        <div style="font-weight:800;">${escapeHtml(sk.navn || "Skifte")}</div>
+                        <div class="muted" style="font-size:12px; margin-top:4px;">
+                          ${typeLabel(sk.type)} • ${round1(sk.areal)} daa
+                        </div>
+                      </div>
+                      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <button class="btn" data-edit="${escapeHtml(sk.id)}">Rediger</button>
+                        <button class="btn danger" data-del="${escapeHtml(sk.id)}">Slett</button>
+                      </div>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            `}
+          </div>
+        </div>
+
+        <div class="muted" style="margin-top:10px; font-size:12px; line-height:1.35;">
+          Skifter ligger under <b>Min gård</b> fordi dette er “sjeldne endringer”.
         </div>
       `;
 
@@ -227,12 +378,11 @@ export async function boot() {
         document.head.appendChild(st);
       }
 
+      // Lagre gårdsinfo (knapp i view)
       document.getElementById("farm_save")?.addEventListener("click", async () => {
         const name = (document.getElementById("farm_name")?.value ?? "").trim();
         const kommune = (document.getElementById("farm_kommune")?.value ?? "").trim();
-        const arealRaw = String(document.getElementById("farm_areal")?.value ?? "0")
-          .trim()
-          .replace(",", ".");
+        const arealRaw = String(document.getElementById("farm_areal")?.value ?? "0").trim().replace(",", ".");
         const areal = Number(arealRaw);
 
         if (!Number.isFinite(areal) || areal < 0) {
@@ -247,7 +397,58 @@ export async function boot() {
         next.farm.areal = areal;
 
         setData(next);
-        toast("Lagret.");
+        toast("Gårdsinfo lagret.");
+      });
+
+      // Legg til skifte (knapp i view)
+      document.getElementById("skifte_add")?.addEventListener("click", async () => {
+        const sk = await askSkifteFields({});
+        if (!sk) return;
+        const next = clone(d);
+        next.skifter = Array.isArray(next.skifter) ? next.skifter : [];
+        next.skifter.push(sk);
+        setData(next);
+        toast("Skifte lagt til.");
+      });
+
+      // Rediger / slett med event delegation
+      container.querySelectorAll("[data-edit]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-edit");
+          const idx = (d.skifter || []).findIndex(x => x.id === id);
+          if (idx < 0) return;
+
+          const current = d.skifter[idx];
+          const updated = await askSkifteFields(current);
+          if (!updated) return;
+
+          const next = clone(d);
+          next.skifter[idx] = updated;
+          setData(next);
+          toast("Skifte oppdatert.");
+        });
+      });
+
+      container.querySelectorAll("[data-del]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-del");
+          const sk = (d.skifter || []).find(x => x.id === id);
+          if (!sk) return;
+
+          const ok = await confirmDialog({
+            title: "Slett skifte?",
+            subtitle: `${sk.navn || "Skifte"} (${round1(sk.areal)} daa) blir slettet.`,
+            okText: "Slett",
+            cancelText: "Avbryt",
+            danger: true
+          });
+          if (!ok) return;
+
+          const next = clone(d);
+          next.skifter = (next.skifter || []).filter(x => x.id !== id);
+          setData(next);
+          toast("Skifte slettet.");
+        });
       });
     }
   });
@@ -256,3 +457,8 @@ export async function boot() {
   router.init("dashboard");
   pill.textContent = "Klar";
 }
+
+function round1(n) {
+  const x = Number(n || 0);
+  return Math.round(x * 10) / 10;
+} 
