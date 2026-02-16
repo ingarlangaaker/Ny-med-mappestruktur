@@ -46,8 +46,338 @@ export async function boot() {
   // ---- Router ----
   const router = createRouter({ navEl, titleEl, subEl, actionsEl, viewEl });
 
+  // All navigasjon skal bruke encode (routeren din forventer det)
+  function setHash(route) {
+    const r = String(route || "").trim();
+    if (!r) return;
+    window.location.hash = encodeURIComponent(r);
+  }
+
+  // =========================
+  // SAU: dynamiske routes (FIX)
+  // =========================
+  // Routeren din matcher "route" eksakt. Når du går til "sauIndivid:<id>",
+  // må vi registrere DEN eksakte ruten, ellers får du "Ukjent side".
+  const registeredSauRoutes = new Set();
+
+  function ensureSauIndividualRoutes(d) {
+    ensureSau(d);
+    for (const s of d.sau.individuals) {
+      registerSauIndividualRoute(s.id);
+    }
+  }
+
+  function registerSauIndividualRoute(id) {
+    const key = `sauIndivid:${id}`;
+    if (registeredSauRoutes.has(key)) return;
+    registeredSauRoutes.add(key);
+
+    router.registerView(key, {
+      title: "Sau-individ",
+      subtitle: "Detaljer • hendelser • lamming",
+      actions: () => [],
+      render(container, { data: d, setData }) {
+        ensureSau(d);
+
+        const idx = findSauIndex(d, id);
+        if (idx < 0) {
+          container.innerHTML = `<div class="notice">Fant ikke individ.</div>`;
+          return;
+        }
+
+        const s = d.sau.individuals[idx];
+        const mother = s.motherId ? d.sau.individuals.find(x => x.id === s.motherId) : null;
+
+        const evs = (s.events || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+        const lambings = (s.lambings || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+
+        container.innerHTML = `
+          <div class="notice">
+            <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">${escapeHtml(sauDisplayName(s))}</div>
+            ${mother ? `<div class="muted" style="font-size:12px;">Mor: ${escapeHtml(mother.tag || "Ukjent")}</div>` : ""}
+            ${s.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(s.note)}</div>` : ""}
+            ${s.status !== "Aktiv" ? `<div style="margin-top:8px;"><b>Status:</b> ${escapeHtml(s.status)} ${s.exitReason ? `• ${escapeHtml(s.exitReason)}` : ""}</div>` : ""}
+            <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+              <button id="ind_edit" class="btn">Rediger</button>
+              <button id="ind_del" class="btn danger">Slett</button>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:12px;">
+            <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
+              <div>
+                <div style="font-weight:900;">Lamming</div>
+                <div class="muted" style="font-size:12px; margin-top:6px;">Registrer lamming på søye. Kan opprette lam automatisk.</div>
+              </div>
+              <button id="lam_add" class="btn primary">Ny lamming</button>
+            </div>
+
+            <div style="padding:14px; display:grid; gap:10px;">
+              ${lambings.length ? lambings.map(l => `
+                <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
+                  <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                    <div>
+                      <div style="font-weight:900;">${escapeHtml(fmtDate(l.date))} • ${escapeHtml(String(l.count||0))} lam</div>
+                      <div class="muted" style="font-size:12px; margin-top:4px;">
+                        ${l.sireTag ? `Far: ${escapeHtml(l.sireTag)}` : "Far: —"}
+                        ${l.createLambs ? " • Lam opprettet" : ""}
+                      </div>
+                      ${l.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(l.note)}</div>` : ""}
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                      <button class="btn" data-lam-edit="${escapeHtml(l.id)}">Rediger</button>
+                      <button class="btn danger" data-lam-del="${escapeHtml(l.id)}">Slett</button>
+                    </div>
+                  </div>
+                </div>
+              `).join("") : `<div class="notice">Ingen lamminger registrert.</div>`}
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:12px;">
+            <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
+              <div>
+                <div style="font-weight:900;">Hendelser</div>
+                <div class="muted" style="font-size:12px; margin-top:6px;">Kjøp/salg/død/flytting/annet.</div>
+              </div>
+              <button id="ev_add" class="btn primary">Ny hendelse</button>
+            </div>
+
+            <div style="padding:14px; display:grid; gap:10px;">
+              ${evs.length ? evs.map(ev => `
+                <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
+                  <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                    <div>
+                      <div style="font-weight:900;">${escapeHtml(fmtDate(ev.date))} • ${escapeHtml(ev.type || "")}</div>
+                      <div class="muted" style="font-size:12px; margin-top:4px;">
+                        ${ev.counterparty ? escapeHtml(ev.counterparty) : "—"}
+                        ${ev.price != null ? ` • ${escapeHtml(String(ev.price))} kr` : ""}
+                      </div>
+                      ${ev.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(ev.note)}</div>` : ""}
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                      <button class="btn" data-ev-edit="${escapeHtml(ev.id)}">Rediger</button>
+                      <button class="btn danger" data-ev-del="${escapeHtml(ev.id)}">Slett</button>
+                    </div>
+                  </div>
+                </div>
+              `).join("") : `<div class="notice">Ingen hendelser ennå.</div>`}
+            </div>
+          </div>
+        `;
+
+        document.getElementById("ind_edit")?.addEventListener("click", async () => {
+          const updated = await askSauIndividualFields(s);
+          if (!updated) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          const nidx = findSauIndex(next, id);
+          if (nidx < 0) return;
+
+          next.sau.individuals[nidx] = updated;
+          setData(next);
+          toast("Oppdatert.");
+        });
+
+        document.getElementById("ind_del")?.addEventListener("click", async () => {
+          const ok = await confirmDialog({
+            title: "Slette individ?",
+            subtitle: sauDisplayName(s),
+            okText: "Slett",
+            cancelText: "Avbryt",
+            danger: true
+          });
+          if (!ok) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          next.sau.individuals = next.sau.individuals.filter(x => x.id !== id);
+          setData(next);
+          setHash("sau");
+          toast("Slettet.");
+        });
+
+        // --- Hendelser ---
+        document.getElementById("ev_add")?.addEventListener("click", async () => {
+          const ev = await askSauEventFields({});
+          if (!ev) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          const nidx = findSauIndex(next, id);
+          if (nidx < 0) return;
+
+          const ani = next.sau.individuals[nidx];
+          ani.events.push(ev);
+
+          // Status-regel (enkel): Død/Salg => ute
+          if (ev.type === "Død") { ani.status = "Ute"; ani.exitReason = `Død ${fmtDate(ev.date)}`; }
+          if (ev.type === "Salg") { ani.status = "Ute"; ani.exitReason = `Solgt ${fmtDate(ev.date)}`; }
+
+          setData(next);
+          toast("Hendelse lagret.");
+        });
+
+        container.querySelectorAll("[data-ev-edit]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const eid = btn.getAttribute("data-ev-edit");
+            const eidx = (s.events || []).findIndex(x => x.id === eid);
+            if (eidx < 0) return;
+
+            const current = s.events[eidx];
+            const updated = await askSauEventFields(current);
+            if (!updated) return;
+
+            const next = clone(d);
+            ensureSau(next);
+            const nidx = findSauIndex(next, id);
+            if (nidx < 0) return;
+
+            const ani = next.sau.individuals[nidx];
+            const neidx = (ani.events || []).findIndex(x => x.id === eid);
+            if (neidx < 0) return;
+
+            ani.events[neidx] = updated;
+            setData(next);
+            toast("Oppdatert.");
+          });
+        });
+
+        container.querySelectorAll("[data-ev-del]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const eid = btn.getAttribute("data-ev-del");
+            const ev = (s.events || []).find(x => x.id === eid);
+            if (!ev) return;
+
+            const ok = await confirmDialog({
+              title: "Slette hendelse?",
+              subtitle: `${fmtDate(ev.date)} • ${ev.type || ""}`,
+              okText: "Slett",
+              cancelText: "Avbryt",
+              danger: true
+            });
+            if (!ok) return;
+
+            const next = clone(d);
+            ensureSau(next);
+            const nidx = findSauIndex(next, id);
+            if (nidx < 0) return;
+
+            const ani = next.sau.individuals[nidx];
+            ani.events = (ani.events || []).filter(x => x.id !== eid);
+            setData(next);
+            toast("Slettet.");
+          });
+        });
+
+        // --- LAMMING ---
+        document.getElementById("lam_add")?.addEventListener("click", async () => {
+          if (!isEwe(s)) { toast("Lamming kan kun registreres på søye."); return; }
+
+          const lam = await askLammingFields(s, {});
+          if (!lam) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          const nidx = findSauIndex(next, id);
+          if (nidx < 0) return;
+
+          const ewe = next.sau.individuals[nidx];
+          if (!Array.isArray(ewe.lambings)) ewe.lambings = [];
+          ewe.lambings.push({
+            id: lam.id,
+            date: lam.date,
+            count: lam.count,
+            sireTag: lam.sireTag,
+            note: lam.note,
+            createLambs: lam.createLambs,
+            baseTag: lam.baseTag || ""
+          });
+
+          if (lam.createLambs && lam.count > 0) {
+            createLambIndividuals({ d: next, ewe, lambing: lam, count: lam.count });
+            // registrer routes for nyopprettede lam (viktig)
+            ensureSauIndividualRoutes(next);
+          }
+
+          setData(next);
+          toast("Lamming registrert.");
+        });
+
+        container.querySelectorAll("[data-lam-edit]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const lid = btn.getAttribute("data-lam-edit");
+            const lidx = (s.lambings || []).findIndex(x => x.id === lid);
+            if (lidx < 0) return;
+
+            const current = s.lambings[lidx];
+            const updated = await askLammingFields(s, current);
+            if (!updated) return;
+
+            const next = clone(d);
+            ensureSau(next);
+            const nidx = findSauIndex(next, id);
+            if (nidx < 0) return;
+
+            const ewe = next.sau.individuals[nidx];
+            const nlidx = (ewe.lambings || []).findIndex(x => x.id === lid);
+            if (nlidx < 0) return;
+
+            // NB: Vi lar createLambs stå som den var, for å unngå “skape/slette lam” ved redigering.
+            ewe.lambings[nlidx] = {
+              id: updated.id,
+              date: updated.date,
+              count: updated.count,
+              sireTag: updated.sireTag,
+              note: updated.note,
+              createLambs: !!current.createLambs,
+              baseTag: current.baseTag || ""
+            };
+
+            setData(next);
+            toast("Lamming oppdatert.");
+          });
+        });
+
+        container.querySelectorAll("[data-lam-del]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const lid = btn.getAttribute("data-lam-del");
+            const l = (s.lambings || []).find(x => x.id === lid);
+            if (!l) return;
+
+            const ok = await confirmDialog({
+              title: "Slette lamming?",
+              subtitle: `${fmtDate(l.date)} • ${l.count || 0} lam`,
+              okText: "Slett",
+              cancelText: "Avbryt",
+              danger: true
+            });
+            if (!ok) return;
+
+            const next = clone(d);
+            ensureSau(next);
+            const nidx = findSauIndex(next, id);
+            if (nidx < 0) return;
+
+            const ewe = next.sau.individuals[nidx];
+            ewe.lambings = (ewe.lambings || []).filter(x => x.id !== lid);
+
+            // NB: Vi sletter ikke lam-individene automatisk (sikkerhet).
+            setData(next);
+            toast("Lamming slettet.");
+          });
+        });
+      }
+    });
+  }
+
   function setData(next) {
     data = ensureDataShape(next);
+
+    // viktig: registrer dynamiske sauIndivid-ruter før render
+    ensureSauIndividualRoutes(data);
+
     persist();
     router.setCtx(ctx());
     rebuildNav();
@@ -805,7 +1135,7 @@ export async function boot() {
     b.textContent = label;
     b.style.width = "100%";
     if (indent) b.style.paddingLeft = `${12 + indent}px`;
-    b.addEventListener("click", () => { window.location.hash = route; });
+    b.addEventListener("click", () => setHash(route));
     return b;
   }
 
@@ -909,10 +1239,10 @@ export async function boot() {
         </div>
       `;
 
-      document.getElementById("go_farm")?.addEventListener("click", () => { window.location.hash = "settingsFarm"; });
-      document.getElementById("go_prod")?.addEventListener("click", () => { window.location.hash = "settingsProductions"; });
-      document.getElementById("go_fields")?.addEventListener("click", () => { window.location.hash = "settingsFields"; });
-      document.getElementById("go_backup")?.addEventListener("click", () => { window.location.hash = "settingsBackup"; });
+      document.getElementById("go_farm")?.addEventListener("click", () => setHash("settingsFarm"));
+      document.getElementById("go_prod")?.addEventListener("click", () => setHash("settingsProductions"));
+      document.getElementById("go_fields")?.addEventListener("click", () => setHash("settingsFields"));
+      document.getElementById("go_backup")?.addEventListener("click", () => setHash("settingsBackup"));
     }
   });
 
@@ -1276,7 +1606,7 @@ export async function boot() {
           </div>
         </div>
       `;
-      document.getElementById("go")?.addEventListener("click", () => { window.location.hash = "settings"; });
+      document.getElementById("go")?.addEventListener("click", () => setHash("settings"));
     }
   });
 
@@ -1725,7 +2055,7 @@ export async function boot() {
 
       document.getElementById("pdf_sproyte")?.addEventListener("click", () => exportSprøytePDF(d));
       document.getElementById("pdf_gjodsel")?.addEventListener("click", () => exportGjødselPDF(d));
-      document.getElementById("go_settings")?.addEventListener("click", () => { window.location.hash = "settings"; });
+      document.getElementById("go_settings")?.addEventListener("click", () => setHash("settings"));
     }
   });
 
@@ -1995,7 +2325,7 @@ export async function boot() {
       `;
 
       container.querySelectorAll("[data-go]").forEach(btn => {
-        btn.addEventListener("click", () => { window.location.hash = btn.getAttribute("data-go"); });
+        btn.addEventListener("click", () => setHash(btn.getAttribute("data-go")));
       });
     }
   });
@@ -2014,6 +2344,8 @@ export async function boot() {
           const next = clone(d);
           ensureSau(next);
           next.sau.individuals.push(ind);
+          // viktig: registrer route for nytt individ
+          ensureSauIndividualRoutes(next);
           setData(next);
           toast("Individ lagt til.");
         }
@@ -2027,6 +2359,7 @@ export async function boot() {
       }
 
       ensureSau(d);
+      ensureSauIndividualRoutes(d);
 
       const list = d.sau.individuals
         .slice()
@@ -2066,6 +2399,7 @@ export async function boot() {
         const next = clone(d);
         ensureSau(next);
         next.sau.individuals.push(ind);
+        ensureSauIndividualRoutes(next);
         setData(next);
         toast("Individ lagt til.");
       });
@@ -2073,313 +2407,19 @@ export async function boot() {
       container.querySelectorAll("[data-open]").forEach(btn => {
         btn.addEventListener("click", () => {
           const id = btn.getAttribute("data-open");
-          window.location.hash = `sauIndivid:${id}`;
+          setHash(`sauIndivid:${id}`);
         });
       });
     }
   });
 
-  // Dynamic route handler for sauIndivid:<id>
+  // Fallback hvis noen havner på "#sauIndivid" uten id
   router.registerView("sauIndivid", {
     title: "Sau-individ",
-    subtitle: "Detaljer • hendelser • lamming",
+    subtitle: "Velg individ fra Sau-listen",
     actions: () => [],
-    render(container, { data: d, setData }) {
-      ensureSau(d);
-
-      const raw = String(window.location.hash || "").replace(/^#/, "");
-      let decoded = raw;
-      try { decoded = decodeURIComponent(raw); } catch {}
-      const m = decoded.match(/^sauIndivid:(.+)$/);
-      const id = m ? m[1] : "";
-      const idx = findSauIndex(d, id);
-      if (idx < 0) {
-        container.innerHTML = `<div class="notice">Fant ikke individ.</div>`;
-        return;
-      }
-
-      const s = d.sau.individuals[idx];
-
-      const mother = s.motherId ? d.sau.individuals.find(x => x.id === s.motherId) : null;
-
-      const evs = (s.events || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-      const lambings = (s.lambings || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-
-      container.innerHTML = `
-        <div class="notice">
-          <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">${escapeHtml(sauDisplayName(s))}</div>
-          ${mother ? `<div class="muted" style="font-size:12px;">Mor: ${escapeHtml(mother.tag || "Ukjent")}</div>` : ""}
-          ${s.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(s.note)}</div>` : ""}
-          ${s.status !== "Aktiv" ? `<div style="margin-top:8px;"><b>Status:</b> ${escapeHtml(s.status)} ${s.exitReason ? `• ${escapeHtml(s.exitReason)}` : ""}</div>` : ""}
-          <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-            <button id="ind_edit" class="btn">Rediger</button>
-            <button id="ind_del" class="btn danger">Slett</button>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div>
-              <div style="font-weight:900;">Lamming</div>
-              <div class="muted" style="font-size:12px; margin-top:6px;">Registrer lamming på søye. Kan opprette lam automatisk.</div>
-            </div>
-            <button id="lam_add" class="btn primary">Ny lamming</button>
-          </div>
-
-          <div style="padding:14px; display:grid; gap:10px;">
-            ${lambings.length ? lambings.map(l => `
-              <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
-                <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
-                  <div>
-                    <div style="font-weight:900;">${escapeHtml(fmtDate(l.date))} • ${escapeHtml(String(l.count||0))} lam</div>
-                    <div class="muted" style="font-size:12px; margin-top:4px;">
-                      ${l.sireTag ? `Far: ${escapeHtml(l.sireTag)}` : "Far: —"}
-                      ${l.createLambs ? " • Lam opprettet" : ""}
-                    </div>
-                    ${l.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(l.note)}</div>` : ""}
-                  </div>
-                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="btn" data-lam-edit="${escapeHtml(l.id)}">Rediger</button>
-                    <button class="btn danger" data-lam-del="${escapeHtml(l.id)}">Slett</button>
-                  </div>
-                </div>
-              </div>
-            `).join("") : `<div class="notice">Ingen lamminger registrert.</div>`}
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div>
-              <div style="font-weight:900;">Hendelser</div>
-              <div class="muted" style="font-size:12px; margin-top:6px;">Kjøp/salg/død/flytting/annet.</div>
-            </div>
-            <button id="ev_add" class="btn primary">Ny hendelse</button>
-          </div>
-
-          <div style="padding:14px; display:grid; gap:10px;">
-            ${evs.length ? evs.map(ev => `
-              <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
-                <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
-                  <div>
-                    <div style="font-weight:900;">${escapeHtml(fmtDate(ev.date))} • ${escapeHtml(ev.type || "")}</div>
-                    <div class="muted" style="font-size:12px; margin-top:4px;">
-                      ${ev.counterparty ? escapeHtml(ev.counterparty) : "—"}
-                      ${ev.price != null ? ` • ${escapeHtml(String(ev.price))} kr` : ""}
-                    </div>
-                    ${ev.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(ev.note)}</div>` : ""}
-                  </div>
-                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="btn" data-ev-edit="${escapeHtml(ev.id)}">Rediger</button>
-                    <button class="btn danger" data-ev-del="${escapeHtml(ev.id)}">Slett</button>
-                  </div>
-                </div>
-              </div>
-            `).join("") : `<div class="notice">Ingen hendelser ennå.</div>`}
-          </div>
-        </div>
-      `;
-
-      document.getElementById("ind_edit")?.addEventListener("click", async () => {
-        const updated = await askSauIndividualFields(s);
-        if (!updated) return;
-
-        const next = clone(d);
-        ensureSau(next);
-        const nidx = findSauIndex(next, id);
-        if (nidx < 0) return;
-
-        next.sau.individuals[nidx] = updated;
-        setData(next);
-        toast("Oppdatert.");
-      });
-
-      document.getElementById("ind_del")?.addEventListener("click", async () => {
-        const ok = await confirmDialog({
-          title: "Slette individ?",
-          subtitle: sauDisplayName(s),
-          okText: "Slett",
-          cancelText: "Avbryt",
-          danger: true
-        });
-        if (!ok) return;
-
-        const next = clone(d);
-        ensureSau(next);
-        next.sau.individuals = next.sau.individuals.filter(x => x.id !== id);
-        setData(next);
-        window.location.hash = "sau";
-        toast("Slettet.");
-      });
-
-      // --- Hendelser ---
-      document.getElementById("ev_add")?.addEventListener("click", async () => {
-        const ev = await askSauEventFields({});
-        if (!ev) return;
-
-        const next = clone(d);
-        ensureSau(next);
-        const nidx = findSauIndex(next, id);
-        if (nidx < 0) return;
-
-        const ani = next.sau.individuals[nidx];
-        ani.events.push(ev);
-
-        // Status-regel (enkel): Død/Salg => ute
-        if (ev.type === "Død") { ani.status = "Ute"; ani.exitReason = `Død ${fmtDate(ev.date)}`; }
-        if (ev.type === "Salg") { ani.status = "Ute"; ani.exitReason = `Solgt ${fmtDate(ev.date)}`; }
-
-        setData(next);
-        toast("Hendelse lagret.");
-      });
-
-      container.querySelectorAll("[data-ev-edit]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const eid = btn.getAttribute("data-ev-edit");
-          const eidx = (s.events || []).findIndex(x => x.id === eid);
-          if (eidx < 0) return;
-
-          const current = s.events[eidx];
-          const updated = await askSauEventFields(current);
-          if (!updated) return;
-
-          const next = clone(d);
-          ensureSau(next);
-          const nidx = findSauIndex(next, id);
-          if (nidx < 0) return;
-
-          const ani = next.sau.individuals[nidx];
-          const neidx = (ani.events || []).findIndex(x => x.id === eid);
-          if (neidx < 0) return;
-
-          ani.events[neidx] = updated;
-          setData(next);
-          toast("Oppdatert.");
-        });
-      });
-
-      container.querySelectorAll("[data-ev-del]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const eid = btn.getAttribute("data-ev-del");
-          const ev = (s.events || []).find(x => x.id === eid);
-          if (!ev) return;
-
-          const ok = await confirmDialog({
-            title: "Slette hendelse?",
-            subtitle: `${fmtDate(ev.date)} • ${ev.type || ""}`,
-            okText: "Slett",
-            cancelText: "Avbryt",
-            danger: true
-          });
-          if (!ok) return;
-
-          const next = clone(d);
-          ensureSau(next);
-          const nidx = findSauIndex(next, id);
-          if (nidx < 0) return;
-
-          const ani = next.sau.individuals[nidx];
-          ani.events = (ani.events || []).filter(x => x.id !== eid);
-          setData(next);
-          toast("Slettet.");
-        });
-      });
-
-      // --- LAMMING ---
-      document.getElementById("lam_add")?.addEventListener("click", async () => {
-        if (!isEwe(s)) { toast("Lamming kan kun registreres på søye."); return; }
-
-        const lam = await askLammingFields(s, {});
-        if (!lam) return;
-
-        const next = clone(d);
-        ensureSau(next);
-        const nidx = findSauIndex(next, id);
-        if (nidx < 0) return;
-
-        const ewe = next.sau.individuals[nidx];
-        if (!Array.isArray(ewe.lambings)) ewe.lambings = [];
-        ewe.lambings.push({
-          id: lam.id,
-          date: lam.date,
-          count: lam.count,
-          sireTag: lam.sireTag,
-          note: lam.note,
-          createLambs: lam.createLambs,
-          baseTag: lam.baseTag || ""
-        });
-
-        if (lam.createLambs && lam.count > 0) {
-          createLambIndividuals({ d: next, ewe, lambing: lam, count: lam.count });
-        }
-
-        setData(next);
-        toast("Lamming registrert.");
-      });
-
-      container.querySelectorAll("[data-lam-edit]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const lid = btn.getAttribute("data-lam-edit");
-          const lidx = (s.lambings || []).findIndex(x => x.id === lid);
-          if (lidx < 0) return;
-
-          const current = s.lambings[lidx];
-          const updated = await askLammingFields(s, current);
-          if (!updated) return;
-
-          const next = clone(d);
-          ensureSau(next);
-          const nidx = findSauIndex(next, id);
-          if (nidx < 0) return;
-
-          const ewe = next.sau.individuals[nidx];
-          const nlidx = (ewe.lambings || []).findIndex(x => x.id === lid);
-          if (nlidx < 0) return;
-
-          // NB: Vi lar createLambs stå som den var, for å unngå “skape/slette lam” ved redigering.
-          ewe.lambings[nlidx] = {
-            id: updated.id,
-            date: updated.date,
-            count: updated.count,
-            sireTag: updated.sireTag,
-            note: updated.note,
-            createLambs: !!current.createLambs,
-            baseTag: current.baseTag || ""
-          };
-
-          setData(next);
-          toast("Lamming oppdatert.");
-        });
-      });
-
-      container.querySelectorAll("[data-lam-del]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const lid = btn.getAttribute("data-lam-del");
-          const l = (s.lambings || []).find(x => x.id === lid);
-          if (!l) return;
-
-          const ok = await confirmDialog({
-            title: "Slette lamming?",
-            subtitle: `${fmtDate(l.date)} • ${l.count || 0} lam`,
-            okText: "Slett",
-            cancelText: "Avbryt",
-            danger: true
-          });
-          if (!ok) return;
-
-          const next = clone(d);
-          ensureSau(next);
-          const nidx = findSauIndex(next, id);
-          if (nidx < 0) return;
-
-          const ewe = next.sau.individuals[nidx];
-          ewe.lambings = (ewe.lambings || []).filter(x => x.id !== lid);
-
-          // NB: Vi sletter ikke lam-individene automatisk (sikkerhet).
-          setData(next);
-          toast("Lamming slettet.");
-        });
-      });
+    render(container) {
+      container.innerHTML = `<div class="notice">Åpne et individ via <b>Sau</b>-listen.</div>`;
     }
   });
 
@@ -2421,7 +2461,7 @@ export async function boot() {
           </div>
         </div>
       `;
-      container.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>{ window.location.hash=b.getAttribute("data-go"); }));
+      container.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=> setHash(b.getAttribute("data-go"))));
     }
   });
 
@@ -2463,7 +2503,7 @@ export async function boot() {
           </div>
         </div>
       `;
-      container.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>{ window.location.hash=b.getAttribute("data-go"); }));
+      container.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=> setHash(b.getAttribute("data-go"))));
     }
   });
 
@@ -2475,6 +2515,7 @@ export async function boot() {
   router.registerView("bladlok", { title:"Løk/bladgrønt", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Løk/bladgrønt-modul kommer.</div>`; }});
 
   // ---- init ----
+  ensureSauIndividualRoutes(data); // viktig ved oppstart
   rebuildNav();
   router.init("dashboard");
   pill.textContent = "Klar";
