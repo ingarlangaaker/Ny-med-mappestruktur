@@ -1,72 +1,51 @@
+// modules/router.js
+// Robust router for hash-routes (støtter æøå via encode/decode)
+
 export function createRouter({ navEl, titleEl, subEl, actionsEl, viewEl }) {
   const views = new Map();
-  let ctx = null;
-  let current = null;
+  let currentRoute = "";
+  let ctx = {};
 
   function setCtx(nextCtx) {
-    ctx = nextCtx;
+    ctx = nextCtx || {};
   }
 
-  function registerView(route, def) {
-    views.set(route, def);
-  }
-
-  function setHeader(def) {
-    const t = typeof def.title === "function" ? def.title(ctx?.data) : def.title;
-    const s = typeof def.subtitle === "function" ? def.subtitle(ctx?.data) : def.subtitle;
-
-    titleEl.textContent = t || "";
-    subEl.textContent = s || "";
-  }
-
-  function setActions(def) {
-    actionsEl.innerHTML = "";
-    const acts = typeof def.actions === "function" ? (def.actions(ctx) || []) : (def.actions || []);
-    for (const a of acts) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = a.primary ? "btn primary" : "btn";
-      b.textContent = a.label || "Handling";
-      b.addEventListener("click", () => a.onClick && a.onClick(ctx));
-      actionsEl.appendChild(b);
+  function normalizeHash(hash) {
+    // hash kan være "#spr%C3%B8yting" eller "#sprøyting" eller ""
+    const raw = String(hash || "").replace(/^#/, "").trim();
+    if (!raw) return "";
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      // hvis noen har en "ødelagt" encoding, fall tilbake til raw
+      return raw;
     }
+  }
+
+  function setHash(route) {
+    const r = String(route || "").trim();
+    if (!r) return;
+    // unngå æøå-trøbbel ved å encode når vi setter
+    window.location.hash = encodeURIComponent(r);
   }
 
   function renderRoute(route) {
+    currentRoute = route;
+
     const def = views.get(route);
-    if (!def) {
-      viewEl.innerHTML = `<div class="notice">Ukjent side: <b>${route}</b></div>`;
-      titleEl.textContent = "Ukjent side";
-      subEl.textContent = "";
-      actionsEl.innerHTML = "";
-      return;
+
+    // Title/subtitle
+    if (titleEl) titleEl.textContent = def?.title || "Ukjent side";
+    if (subEl) {
+      const sub = def?.subtitle;
+      subEl.textContent = typeof sub === "function" ? (sub(ctx.data) || "") : (sub || "");
     }
-    current = route;
-    setHeader(def);
-    setActions(def);
-    viewEl.innerHTML = "";
-    def.render(viewEl, ctx);
-  }
 
-  function parseHash() {
-    const raw = (window.location.hash || "").replace("#", "").trim();
-    return raw || "dashboard";
-  }
-
-  function onHashChange() {
-    renderRoute(parseHash());
-  }
-
-  function init(defaultRoute = "dashboard") {
-    if (!window.location.hash) window.location.hash = defaultRoute;
-    window.addEventListener("hashchange", onHashChange);
-    onHashChange();
-  }
-
-  function rerender() {
-    if (!current) return;
-    renderRoute(current);
-  }
-
-  return { registerView, init, rerender, setCtx };
-}
+    // Actions
+    if (actionsEl) {
+      actionsEl.innerHTML = "";
+      const acts = def?.actions ? def.actions(ctx) : [];
+      for (const a of acts || []) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = a.primary
