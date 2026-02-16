@@ -1,15 +1,11 @@
 // modules/app.js
 // Farmapp core
 // - Produksjoner (Innstillinger): Husdyr / Grovfôr / Frukt og grønt + underproduksjoner
+// - Overskriftene er kun overskrifter (ikke må aktiveres). Aktivitet regnes automatisk fra underpunkter.
 // - Meny filtreres basert på aktive produksjoner (gjemmer irrelevant info)
-// - Husdyr er paraply, Sau er egen paraplyside hvor alt sau skal samles videre
+// - Husdyr har paraply, Sau er egen paraplyside hvor alt sau samles videre
 // - Eksisterende: Skifter, Sprøyting, Gjødsel, PDF-eksport (proff) beholdes
-//
-// Leveranse 1 (Sau):
-// - Grupper (sheepGroups)
-// - Individregister (sheepAnimals)
-// - Flytting per individ + historikk (sheepMoves)
-// - Testdata (10 individer) knapp
+// - Sau: individer + hendelser + flytting + lamming (individnivå) + testdata (valgfritt første gang)
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
 import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml, el } from "./ui.js";
@@ -54,7 +50,7 @@ export async function boot() {
     data = ensureDataShape(next);
     persist();
     router.setCtx(ctx());
-    rebuildNav(); // meny filtreres basert på produksjoner
+    rebuildNav();
     router.rerender();
   }
 
@@ -103,11 +99,6 @@ export async function boot() {
 
   function newId(prefix) {
     return `${prefix}_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
-  }
-
-  function go(route) {
-    // Viktig: alltid encode for æøå-ruter
-    window.location.hash = encodeURIComponent(String(route || "").trim());
   }
 
   function typeLabel(t) {
@@ -395,25 +386,31 @@ export async function boot() {
   }
 
   // =========================
-  // PRODUKSJONER (NY LOGIKK)
+  // PRODUKSJONER (overskrifter + underpunkter)
   // =========================
-  function anyTrue(obj, keys) {
-    for (const k of keys) if (obj && obj[k]) return true;
-    return false;
+  function normalizeProductionsEnabled(p) {
+    // Overskrifter er ikke “valg” – vi setter enabled automatisk
+    const husdyrAny =
+      !!p.husdyr.sau || !!p.husdyr.geit || !!p.husdyr.melkeku || !!p.husdyr.ammeku ||
+      !!p.husdyr.ungdyrStorfe || !!p.husdyr.purke || !!p.husdyr.slaktegris ||
+      !!p.husdyr.egg || !!p.husdyr.slaktekylling || !!p.husdyr.kalkun || !!p.husdyr.hest;
+
+    const grovAny = !!p.grovfor.eng || !!p.grovfor.beite || !!p.grovfor.forplan || !!p.grovfor.lager;
+
+    const fgAny = !!p.fruktGront.rabarbra || !!p.fruktGront.potet || !!p.fruktGront.fruktBaer ||
+                  !!p.fruktGront.rot || !!p.fruktGront.kal || !!p.fruktGront.bladLok;
+
+    p.husdyr.enabled = husdyrAny;
+    p.grovfor.enabled = grovAny;
+    p.fruktGront.enabled = fgAny;
   }
 
-  const HUSDYR_KEYS = ["sau","geit","melkeku","ammeku","ungdyrStorfe","purke","slaktegris","egg","slaktekylling","kalkun","hest"];
-  const GROVFOR_KEYS = ["eng","beite","forplan","lager"];
-  const FG_KEYS = ["rabarbra","potet","fruktBaer","rot","kal","bladLok"];
-
   function activeSummary(p) {
+    normalizeProductionsEnabled(p);
+
     const out = [];
 
-    const husdyrOn = anyTrue(p.husdyr, HUSDYR_KEYS);
-    const grovOn = anyTrue(p.grovfor, GROVFOR_KEYS);
-    const fgOn = anyTrue(p.fruktGront, FG_KEYS);
-
-    if (husdyrOn) {
+    if (p.husdyr.enabled) {
       const a = [];
       if (p.husdyr.sau) a.push("Sau");
       if (p.husdyr.geit) a.push("Geit");
@@ -426,19 +423,19 @@ export async function boot() {
       if (p.husdyr.slaktekylling) a.push("Slaktekylling");
       if (p.husdyr.kalkun) a.push("Kalkun");
       if (p.husdyr.hest) a.push("Hest");
-      out.push(`Husdyr: ${a.join(", ")}`);
+      out.push(`Husdyr: ${a.length ? a.join(", ") : "aktiv"}`);
     }
 
-    if (grovOn) {
+    if (p.grovfor.enabled) {
       const a = [];
       if (p.grovfor.eng) a.push("Eng/slått");
       if (p.grovfor.beite) a.push("Beite");
       if (p.grovfor.forplan) a.push("Fôrplan");
       if (p.grovfor.lager) a.push("Grovfôrlager");
-      out.push(`Grovfôr: ${a.join(", ")}`);
+      out.push(`Grovfôr: ${a.length ? a.join(", ") : "aktiv"}`);
     }
 
-    if (fgOn) {
+    if (p.fruktGront.enabled) {
       const a = [];
       if (p.fruktGront.rabarbra) a.push("Rabarbra");
       if (p.fruktGront.potet) a.push("Potet");
@@ -446,10 +443,10 @@ export async function boot() {
       if (p.fruktGront.kal) a.push("Kålvekster");
       if (p.fruktGront.bladLok) a.push("Løk/bladgrønt");
       if (p.fruktGront.fruktBaer) a.push("Frukt/bær");
-      out.push(`Frukt og grønt: ${a.join(", ")}`);
+      out.push(`Frukt og grønt: ${a.length ? a.join(", ") : "aktiv"}`);
     }
 
-    if (!out.length) return "Ingen produksjoner aktivert ennå.";
+    if (!out.length) return "Ingen produksjoner valgt ennå.";
     return out.join(" • ");
   }
 
@@ -800,352 +797,6 @@ export async function boot() {
   }
 
   // =========================
-  // Sau: data helpers
-  // =========================
-  function sheepGroupById(d, id) {
-    return (d.sheepGroups || []).find(g => g.id === id) || null;
-  }
-
-  function sheepGroupName(d, id) {
-    const g = sheepGroupById(d, id);
-    return g ? (g.name || "Gruppe") : "Ingen gruppe";
-  }
-
-  function sheepAnimalById(d, id) {
-    return (d.sheepAnimals || []).find(a => a.id === id) || null;
-  }
-
-  function sheepTypeLabel(t) {
-    if (t === "Søye") return "Søye";
-    if (t === "Vær") return "Vær";
-    if (t === "Lam") return "Lam";
-    return t || "Ukjent";
-  }
-
-  function sheepSexLabel(s) {
-    if (s === "F") return "Hunn";
-    if (s === "M") return "Hann";
-    return s || "Ukjent";
-  }
-
-  function sheepStatusLabel(s) {
-    if (s === "Aktiv") return "Aktiv";
-    if (s === "Solgt") return "Solgt";
-    if (s === "Slaktet") return "Slaktet";
-    if (s === "Død") return "Død";
-    return s || "Aktiv";
-  }
-
-  function sheepCounts(d) {
-    const active = (d.sheepAnimals || []).filter(a => (a.status || "Aktiv") === "Aktiv");
-    const out = { totalAktiv: active.length, sye: 0, vaer: 0, lam: 0 };
-    for (const a of active) {
-      if (a.type === "Søye") out.sye++;
-      else if (a.type === "Vær") out.vaer++;
-      else if (a.type === "Lam") out.lam++;
-    }
-    return out;
-  }
-
-  function sheepGroupOptions(d, fallbackId = "") {
-    const gs = (d.sheepGroups || []).slice().sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"nb"));
-    const opts = gs.map(g => ({ value: g.id, label: g.name || "Gruppe" }));
-    if (!opts.length) {
-      if (fallbackId) return [{ value: fallbackId, label: "Ingen grupper (opprett først)" }];
-      return [{ value: "", label: "Ingen grupper (opprett først)" }];
-    }
-    return opts;
-  }
-
-  async function askSheepGroupFields(initial = {}) {
-    const name = await promptDialog({
-      title: "Sau – Gruppe",
-      subtitle: "Navn",
-      label: "Gruppenavn",
-      value: initial.name || "",
-      placeholder: "F.eks. Søyer, Værer, Lam 2026",
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (name === null) return null;
-
-    const type = await selectDialog({
-      title: "Sau – Gruppe",
-      subtitle: "Type (valgfritt, kun for sortering)",
-      label: "Type",
-      value: initial.type || "Blandet",
-      options: [
-        { value: "Blandet", label: "Blandet" },
-        { value: "Søyer", label: "Søyer" },
-        { value: "Værer", label: "Værer" },
-        { value: "Lam", label: "Lam" }
-      ],
-      okText: "Lagre",
-      cancelText: "Avbryt"
-    });
-    if (type === null) return null;
-
-    return {
-      id: initial.id || newId("sg"),
-      name: String(name).trim(),
-      type: String(type || "Blandet"),
-      note: String(initial.note || "")
-    };
-  }
-
-  async function askSheepAnimalFields(d, initial = {}) {
-    const earTag = await promptDialog({
-      title: "Sau – Individ",
-      subtitle: "ID / øremerke",
-      label: "Øremerke / individ-ID",
-      value: initial.earTag || "",
-      placeholder: "F.eks. NO12345-67890",
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (earTag === null) return null;
-
-    const type = await selectDialog({
-      title: "Sau – Individ",
-      subtitle: "Type",
-      label: "Type",
-      value: initial.type || "Søye",
-      options: [
-        { value: "Søye", label: "Søye" },
-        { value: "Vær", label: "Vær" },
-        { value: "Lam", label: "Lam" }
-      ],
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (type === null) return null;
-
-    const sex = await selectDialog({
-      title: "Sau – Individ",
-      subtitle: "Kjønn",
-      label: "Kjønn",
-      value: initial.sex || (type === "Søye" ? "F" : "M"),
-      options: [
-        { value: "F", label: "Hunn (F)" },
-        { value: "M", label: "Hann (M)" }
-      ],
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (sex === null) return null;
-
-    const breed = await selectDialog({
-      title: "Sau – Individ",
-      subtitle: "Rase (kan utvides senere)",
-      label: "Rase",
-      value: initial.breed || "NKS",
-      options: [
-        { value: "NKS", label: "NKS" },
-        { value: "Villsau", label: "Villsau" },
-        { value: "Annet", label: "Annet" }
-      ],
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (breed === null) return null;
-
-    const birthDate = await promptDialog({
-      title: "Sau – Individ",
-      subtitle: "Fødselsdato (valgfritt)",
-      label: "Født (YYYY-MM-DD)",
-      value: initial.birthDate || "",
-      placeholder: "2026-04-10",
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (birthDate === null) return null;
-
-    const status = await selectDialog({
-      title: "Sau – Individ",
-      subtitle: "Status",
-      label: "Status",
-      value: initial.status || "Aktiv",
-      options: [
-        { value: "Aktiv", label: "Aktiv" },
-        { value: "Solgt", label: "Solgt" },
-        { value: "Slaktet", label: "Slaktet" },
-        { value: "Død", label: "Død" }
-      ],
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (status === null) return null;
-
-    const groupId = await selectDialog({
-      title: "Sau – Individ",
-      subtitle: "Gruppe",
-      label: "Gruppe",
-      value: initial.groupId || ((d.sheepGroups || [])[0]?.id || ""),
-      options: sheepGroupOptions(d),
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (groupId === null) return null;
-
-    const note = await promptDialog({
-      title: "Sau – Individ",
-      subtitle: "Notat (valgfritt)",
-      label: "Notat",
-      value: initial.note || "",
-      placeholder: "",
-      okText: "Lagre",
-      cancelText: "Avbryt"
-    });
-    if (note === null) return null;
-
-    if (String(birthDate || "").trim() && !isISODate(String(birthDate).trim())) {
-      toast("Født må være YYYY-MM-DD eller tom.");
-      return null;
-    }
-
-    return {
-      id: initial.id || newId("sa"),
-      earTag: String(earTag).trim(),
-      type: String(type),
-      sex: String(sex),
-      breed: String(breed),
-      birthDate: String(birthDate || "").trim(),
-      status: String(status),
-      groupId: String(groupId || ""),
-      note: String(note || "").trim()
-    };
-  }
-
-  async function moveSheepDialog(d, animalId) {
-    const a = sheepAnimalById(d, animalId);
-    if (!a) { toast("Fant ikke individ."); return null; }
-    if ((a.status || "Aktiv") !== "Aktiv") {
-      toast("Kun aktive dyr kan flyttes (status må være Aktiv).");
-      return null;
-    }
-
-    if (!(d.sheepGroups || []).length) {
-      toast("Du må opprette minst én gruppe først.");
-      return null;
-    }
-
-    const date = await promptDialog({
-      title: "Flytt dyr",
-      subtitle: `${a.earTag || a.id}`,
-      label: "Dato (YYYY-MM-DD)",
-      value: todayISO(),
-      placeholder: "YYYY-MM-DD",
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (date === null) return null;
-    if (!isISODate(String(date).trim())) { toast("Dato må være YYYY-MM-DD."); return null; }
-
-    const toGroupId = await selectDialog({
-      title: "Flytt dyr",
-      subtitle: "Velg ny gruppe",
-      label: "Til gruppe",
-      value: a.groupId || (d.sheepGroups[0]?.id || ""),
-      options: sheepGroupOptions(d),
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (toGroupId === null) return null;
-
-    const reason = await promptDialog({
-      title: "Flytt dyr",
-      subtitle: "Årsak (valgfritt)",
-      label: "Årsak",
-      value: "",
-      placeholder: "F.eks. sortering, lamming, salg, beite",
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (reason === null) return null;
-
-    const note = await promptDialog({
-      title: "Flytt dyr",
-      subtitle: "Notat (valgfritt)",
-      label: "Notat",
-      value: "",
-      placeholder: "",
-      okText: "Lagre",
-      cancelText: "Avbryt"
-    });
-    if (note === null) return null;
-
-    const fromGroupId = a.groupId || "";
-
-    if (String(toGroupId) === String(fromGroupId)) {
-      toast("Dyret er allerede i den gruppen.");
-      return null;
-    }
-
-    return {
-      id: newId("sm"),
-      date: String(date).trim(),
-      animalId: a.id,
-      fromGroupId,
-      toGroupId: String(toGroupId),
-      reason: String(reason || "").trim(),
-      note: String(note || "").trim()
-    };
-  }
-
-  function seedSheepTestData(d) {
-    const next = clone(d);
-
-    if (!(next.sheepGroups || []).length) next.sheepGroups = [];
-
-    const ensureGroup = (name, type) => {
-      const found = next.sheepGroups.find(g => (g.name || "").toLowerCase() === name.toLowerCase());
-      if (found) return found.id;
-      const g = { id: newId("sg"), name, type, note: "" };
-      next.sheepGroups.push(g);
-      return g.id;
-    };
-
-    const gS = ensureGroup("Søyer", "Søyer");
-    const gV = ensureGroup("Værer", "Værer");
-    const gL = ensureGroup("Lam 2026", "Lam");
-
-    if (!Array.isArray(next.sheepAnimals)) next.sheepAnimals = [];
-    if (!Array.isArray(next.sheepMoves)) next.sheepMoves = [];
-
-    const rnd = (min, max) => Math.floor(min + Math.random() * (max - min + 1));
-    const tag = (n) => `NO${rnd(10000,99999)}-${String(n).padStart(5,"0")}`;
-    const base = Date.now().toString(16).slice(-4);
-
-    const animals = [
-      { earTag: tag(101), type:"Søye", sex:"F", breed:"NKS", birthDate:"2022-03-15", status:"Aktiv", groupId:gS, note:"Rolig søye (test)" },
-      { earTag: tag(102), type:"Søye", sex:"F", breed:"NKS", birthDate:"2021-04-02", status:"Aktiv", groupId:gS, note:"Tvillingmor (test)" },
-      { earTag: tag(103), type:"Søye", sex:"F", breed:"Villsau", birthDate:"2020-05-10", status:"Aktiv", groupId:gS, note:"Villsau-linje (test)" },
-
-      { earTag: tag(201), type:"Vær", sex:"M", breed:"NKS", birthDate:"2021-02-20", status:"Aktiv", groupId:gV, note:"Avlsvær (test)" },
-      { earTag: tag(202), type:"Vær", sex:"M", breed:"Villsau", birthDate:"2022-01-18", status:"Aktiv", groupId:gV, note:"Unge vær (test)" },
-
-      { earTag: tag(301), type:"Lam", sex:"F", breed:"NKS", birthDate:"2026-04-08", status:"Aktiv", groupId:gL, note:"Lam A (test)" },
-      { earTag: tag(302), type:"Lam", sex:"M", breed:"NKS", birthDate:"2026-04-08", status:"Aktiv", groupId:gL, note:"Lam B (test)" },
-      { earTag: tag(303), type:"Lam", sex:"F", breed:"Villsau", birthDate:"2026-04-12", status:"Aktiv", groupId:gL, note:"Lam C (test)" },
-      { earTag: tag(304), type:"Lam", sex:"M", breed:"Villsau", birthDate:"2026-04-12", status:"Aktiv", groupId:gL, note:"Lam D (test)" },
-      { earTag: `TEST-${base}-10`, type:"Lam", sex:"F", breed:"Annet", birthDate:"2026-04-20", status:"Aktiv", groupId:gL, note:"Annet (test)" },
-    ];
-
-    const existingTags = new Set(next.sheepAnimals.map(a => String(a.earTag || "").trim().toLowerCase()));
-    for (const a of animals) {
-      const key = String(a.earTag || "").trim().toLowerCase();
-      if (key && existingTags.has(key)) continue;
-      next.sheepAnimals.push({ id:newId("sa"), ...a });
-      existingTags.add(key);
-    }
-
-    // Viktig: aktiver Sau automatisk i produksjoner (slik bruker slipper “Husdyr”)
-    next.productions.husdyr.sau = true;
-
-    return next;
-  }
-
-  // =========================
   // NAV (filter basert på produksjoner)
   // =========================
   function navButton(label, route, indent = 0) {
@@ -1154,7 +805,7 @@ export async function boot() {
     b.textContent = label;
     b.style.width = "100%";
     if (indent) b.style.paddingLeft = `${12 + indent}px`;
-    b.addEventListener("click", () => go(route));
+    b.addEventListener("click", () => { window.location.hash = route; });
     return b;
   }
 
@@ -1183,12 +834,9 @@ export async function boot() {
     navEl.appendChild(navButton("Gjødsel", "gjødsel"));
 
     const p = data.productions;
+    normalizeProductionsEnabled(p);
 
-    const husdyrOn = anyTrue(p.husdyr, HUSDYR_KEYS);
-    const grovOn = anyTrue(p.grovfor, GROVFOR_KEYS);
-    const fgOn = anyTrue(p.fruktGront, FG_KEYS);
-
-    if (husdyrOn) {
+    if (p.husdyr.enabled) {
       navEl.appendChild(navDivider("Husdyr"));
       navEl.appendChild(navButton("Husdyr", "husdyrHub"));
       if (p.husdyr.sau) navEl.appendChild(navButton("Sau", "sau", 10));
@@ -1199,7 +847,7 @@ export async function boot() {
       if (p.husdyr.hest) navEl.appendChild(navButton("Hest", "hest", 10));
     }
 
-    if (grovOn) {
+    if (p.grovfor.enabled) {
       navEl.appendChild(navDivider("Grovfôr"));
       navEl.appendChild(navButton("Grovfôr", "grovforHub"));
       if (p.grovfor.eng) navEl.appendChild(navButton("Eng og slått", "grovforEng", 10));
@@ -1208,7 +856,7 @@ export async function boot() {
       if (p.grovfor.lager) navEl.appendChild(navButton("Grovfôrlager", "grovforLager", 10));
     }
 
-    if (fgOn) {
+    if (p.fruktGront.enabled) {
       navEl.appendChild(navDivider("Frukt og grønt"));
       navEl.appendChild(navButton("Frukt og grønt", "fgHub"));
       if (p.fruktGront.rabarbra) navEl.appendChild(navButton("Rabarbra", "rabarbra", 10));
@@ -1261,10 +909,10 @@ export async function boot() {
         </div>
       `;
 
-      document.getElementById("go_farm")?.addEventListener("click", () => go("settingsFarm"));
-      document.getElementById("go_prod")?.addEventListener("click", () => go("settingsProductions"));
-      document.getElementById("go_fields")?.addEventListener("click", () => go("settingsFields"));
-      document.getElementById("go_backup")?.addEventListener("click", () => go("settingsBackup"));
+      document.getElementById("go_farm")?.addEventListener("click", () => { window.location.hash = "settingsFarm"; });
+      document.getElementById("go_prod")?.addEventListener("click", () => { window.location.hash = "settingsProductions"; });
+      document.getElementById("go_fields")?.addEventListener("click", () => { window.location.hash = "settingsFields"; });
+      document.getElementById("go_backup")?.addEventListener("click", () => { window.location.hash = "settingsBackup"; });
     }
   });
 
@@ -1320,13 +968,13 @@ export async function boot() {
     }
   });
 
-  // PRODUKSJONER: Overskrifter er ikke knapper og må ikke "aktiveres"
   router.registerView("settingsProductions", {
     title: "Produksjoner",
-    subtitle: "Huk av underproduksjoner – overskrifter er bare tekst",
+    subtitle: "Huk av hva som skal vises i menyen",
     actions: () => [],
     render(container, { data: d, setData }) {
       const p = d.productions;
+      normalizeProductionsEnabled(p);
 
       function prodCheckbox(id, label, checked) {
         return `
@@ -1340,7 +988,7 @@ export async function boot() {
       container.innerHTML = `
         <div class="notice">
           <div class="muted" style="font-size:12px; line-height:1.4;">
-            Kryss av det du bruker. Menyen oppdateres automatisk – du trenger ikke aktivere overskriften.
+            Dette styrer hva som vises i menyen. Overskriftene er kun grupper – du trenger ikke aktivere dem.
           </div>
         </div>
 
@@ -1360,8 +1008,7 @@ export async function boot() {
 
             <div class="card" style="background:rgba(0,0,0,.12); border:1px solid rgba(255,255,255,.10);">
               <div style="padding:12px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">
-                Husdyr
-                <div class="muted" style="font-size:12px; font-weight:600; margin-top:4px;">Velg det du har.</div>
+                Husdyr (overskrift)
               </div>
               <div style="padding:12px; display:grid; gap:8px;">
                 ${prodCheckbox("p_sau", "Sau", p.husdyr.sau)}
@@ -1384,8 +1031,7 @@ export async function boot() {
 
             <div class="card" style="background:rgba(0,0,0,.12); border:1px solid rgba(255,255,255,.10);">
               <div style="padding:12px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">
-                Grovfôr
-                <div class="muted" style="font-size:12px; font-weight:600; margin-top:4px;">Velg funksjoner du bruker.</div>
+                Grovfôr (overskrift)
               </div>
               <div style="padding:12px; display:grid; gap:8px;">
                 ${prodCheckbox("p_eng", "Eng og slått (høy/rundball/silo)", p.grovfor.eng)}
@@ -1397,8 +1043,7 @@ export async function boot() {
 
             <div class="card" style="background:rgba(0,0,0,.12); border:1px solid rgba(255,255,255,.10);">
               <div style="padding:12px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">
-                Frukt og grønt
-                <div class="muted" style="font-size:12px; font-weight:600; margin-top:4px;">Velg det du dyrker.</div>
+                Frukt og grønt (overskrift)
               </div>
               <div style="padding:12px; display:grid; gap:8px;">
                 ${prodCheckbox("p_rabarbra", "Rabarbra", p.fruktGront.rabarbra)}
@@ -1445,27 +1090,13 @@ export async function boot() {
         next.productions.fruktGront.kal = getChecked("p_kal");
         next.productions.fruktGront.bladLok = getChecked("p_bladlok");
 
-        // enabled settes automatisk i ensureDataShape(), men vi gjør det også her for tydelighet
-        next.productions.husdyr.enabled = anyTrue(next.productions.husdyr, HUSDYR_KEYS);
-        next.productions.grovfor.enabled = anyTrue(next.productions.grovfor, GROVFOR_KEYS);
-        next.productions.fruktGront.enabled = anyTrue(next.productions.fruktGront, FG_KEYS);
+        normalizeProductionsEnabled(next.productions);
 
         setData(next);
         toast("Produksjoner lagret. Menyen er oppdatert.");
       });
     }
   });
-
-  // ... resten av filen er uendret fra forrige versjon (views etc.)
-  // For å holde denne leveransen komplett og stabil, beholdes all logikk videre slik den var.
-
-  // =========================
-  // (RESTEN AV FILEN)
-  // =========================
-
-  // --------- SETTINGS FIELDS / BACKUP / DASHBOARD / SPRØYTING / GJØDSEL / HUSDYR HUB / SAU / GROVFÔR / FG ---------
-  // (Den delen under er identisk med forrige versjon du fikk, unntatt små sjekkpunkter for enabled.
-  //  For sikkerhet bruker vi alltid "anyTrue(...)" i sjekker.)
 
   router.registerView("settingsFields", {
     title: "Skifter",
@@ -1645,18 +1276,413 @@ export async function boot() {
           </div>
         </div>
       `;
-      document.getElementById("go")?.addEventListener("click", () => go("settings"));
+      document.getElementById("go")?.addEventListener("click", () => { window.location.hash = "settings"; });
     }
   });
 
   // =========================
-  // Views (dash / sprøyting / gjødsel / hubs)
+  // SAU: Data + hjelpere + dialoger
+  // =========================
+  function ensureSau(d) {
+    if (!d.sau) d.sau = {};
+    if (!Array.isArray(d.sau.individuals)) d.sau.individuals = [];
+    if (!d.sau._seeded) d.sau._seeded = false;
+
+    // Seed 10 test-individer første gang (kun hvis tomt)
+    if (!d.sau._seeded && d.sau.individuals.length === 0) {
+      const breeds = ["NKS", "Villsau", "Spæl"];
+      const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+      const randDate = (yearFrom, yearTo) => {
+        const y = Math.floor(Math.random() * (yearTo - yearFrom + 1)) + yearFrom;
+        const m = Math.floor(Math.random() * 12) + 1;
+        const dd = Math.floor(Math.random() * 28) + 1;
+        return `${y}-${pad2(m)}-${pad2(dd)}`;
+      };
+
+      const mk = (tag, sex, born) => ({
+        id: newId("sheep"),
+        tag,
+        name: "",
+        sex,
+        born,
+        breed: pick(breeds),
+        note: "Testdata",
+        status: "Aktiv",
+        exitReason: "",
+        motherId: "",
+        lambingId: "",
+        events: [],
+        lambings: []
+      });
+
+      const e1 = mk("NO10001", "Søye", randDate(2021, 2023));
+      const e2 = mk("NO10002", "Søye", randDate(2020, 2023));
+      const e3 = mk("NO10003", "Søye", randDate(2021, 2022));
+      const r1 = mk("NO90001", "Vær", randDate(2019, 2022));
+      const l1 = mk("NO20001", "Lam", randDate(2025, 2026));
+      const l2 = mk("NO20002", "Lam", randDate(2025, 2026));
+      const l3 = mk("NO20003", "Lam", randDate(2025, 2026));
+      const l4 = mk("NO20004", "Lam", randDate(2025, 2026));
+      const l5 = mk("NO20005", "Lam", randDate(2025, 2026));
+      const r2 = mk("NO90002", "Vær", randDate(2019, 2023));
+
+      // Knytt noen lam til mor (bare test)
+      l1.motherId = e1.id;
+      l2.motherId = e1.id;
+      l3.motherId = e2.id;
+
+      d.sau.individuals.push(e1, e2, e3, r1, r2, l1, l2, l3, l4, l5);
+      d.sau._seeded = true;
+    }
+
+    // Normalize individer
+    for (const s of d.sau.individuals) {
+      if (!s.id) s.id = newId("sheep");
+      if (s.tag == null) s.tag = "";
+      if (s.name == null) s.name = "";
+      if (s.sex == null) s.sex = "Ukjent";
+      if (s.born == null) s.born = "";
+      if (s.breed == null) s.breed = "";
+      if (s.note == null) s.note = "";
+      if (!Array.isArray(s.events)) s.events = [];
+      if (!Array.isArray(s.lambings)) s.lambings = [];
+      if (s.motherId == null) s.motherId = "";
+      if (s.lambingId == null) s.lambingId = "";
+      if (!s.status) s.status = "Aktiv";
+      if (s.exitReason == null) s.exitReason = "";
+    }
+  }
+
+  function sauDisplayName(s) {
+    const tag = (s?.tag || "").trim();
+    const name = (s?.name || "").trim();
+    const sex = (s?.sex || "").trim();
+    const born = (s?.born || "").trim();
+    return `${tag || "Uten øremerke"}${name ? ` • ${name}` : ""}${sex ? ` • ${sex}` : ""}${born ? ` • f. ${fmtDate(born)}` : ""}`;
+  }
+
+  function findSauIndex(d, id) {
+    ensureSau(d);
+    return d.sau.individuals.findIndex(x => x.id === id);
+  }
+
+  function isEwe(s) {
+    return String(s?.sex || "").toLowerCase().includes("søye");
+  }
+
+  async function askSauIndividualFields(initial = {}) {
+    const tag = await promptDialog({
+      title: "Sau-individ",
+      subtitle: "Øremerke / ID",
+      label: "Øremerke/ID",
+      value: initial.tag || "",
+      placeholder: "F.eks. NO12345",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (tag === null) return null;
+
+    const name = await promptDialog({
+      title: "Sau-individ",
+      subtitle: "Navn (valgfritt)",
+      label: "Navn",
+      value: initial.name || "",
+      placeholder: "",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (name === null) return null;
+
+    const sex = await selectDialog({
+      title: "Sau-individ",
+      subtitle: "Kjønn / kategori",
+      label: "Kjønn",
+      value: initial.sex || "Søye",
+      options: [
+        { value: "Søye", label: "Søye" },
+        { value: "Vær", label: "Vær" },
+        { value: "Lam", label: "Lam" },
+        { value: "Ukjent", label: "Ukjent" }
+      ],
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (sex === null) return null;
+
+    const born = await promptDialog({
+      title: "Sau-individ",
+      subtitle: "Fødselsdato (valgfritt)",
+      label: "Født (YYYY-MM-DD)",
+      value: initial.born || "",
+      placeholder: "YYYY-MM-DD",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (born === null) return null;
+    const bornTrim = String(born || "").trim();
+    if (bornTrim && !isISODate(bornTrim)) { toast("Født må være YYYY-MM-DD eller tom."); return null; }
+
+    const breed = await promptDialog({
+      title: "Sau-individ",
+      subtitle: "Rase (valgfritt)",
+      label: "Rase",
+      value: initial.breed || "",
+      placeholder: "F.eks. NKS",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (breed === null) return null;
+
+    const note = await promptDialog({
+      title: "Sau-individ",
+      subtitle: "Notat (valgfritt)",
+      label: "Notat",
+      value: initial.note || "",
+      placeholder: "",
+      okText: "Lagre",
+      cancelText: "Avbryt"
+    });
+    if (note === null) return null;
+
+    return {
+      id: initial.id || newId("sheep"),
+      tag: String(tag || "").trim(),
+      name: String(name || "").trim(),
+      sex: String(sex || "Ukjent"),
+      born: bornTrim,
+      breed: String(breed || "").trim(),
+      note: String(note || "").trim(),
+      status: initial.status || "Aktiv",
+      exitReason: initial.exitReason || "",
+      motherId: initial.motherId || "",
+      lambingId: initial.lambingId || "",
+      events: Array.isArray(initial.events) ? initial.events : [],
+      lambings: Array.isArray(initial.lambings) ? initial.lambings : []
+    };
+  }
+
+  async function askSauEventFields(initial = {}) {
+    const type = await selectDialog({
+      title: "Hendelse",
+      subtitle: "Type",
+      label: "Type",
+      value: initial.type || "Annet",
+      options: [
+        { value: "Kjøp", label: "Kjøp" },
+        { value: "Salg", label: "Salg" },
+        { value: "Flytting", label: "Flytting" },
+        { value: "Død", label: "Død" },
+        { value: "Annet", label: "Annet" }
+      ],
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (type === null) return null;
+
+    const date = await promptDialog({
+      title: "Hendelse",
+      subtitle: "Dato (YYYY-MM-DD)",
+      label: "Dato",
+      value: initial.date || todayISO(),
+      placeholder: "YYYY-MM-DD",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (date === null) return null;
+    const dateTrim = String(date || "").trim();
+    if (!isISODate(dateTrim)) { toast("Dato må være YYYY-MM-DD."); return null; }
+
+    const counterparty = await promptDialog({
+      title: "Hendelse",
+      subtitle: "Motpart/sted (valgfritt)",
+      label: "Motpart / sted",
+      value: initial.counterparty || "",
+      placeholder: "F.eks. Selger, kjøper, beite, fjøs",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (counterparty === null) return null;
+
+    const priceTxt = await promptDialog({
+      title: "Hendelse",
+      subtitle: "Pris (valgfritt)",
+      label: "Pris (kr) – tomt = ingen",
+      value: initial.price != null ? String(initial.price) : "",
+      placeholder: "F.eks. 1500",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (priceTxt === null) return null;
+    const priceTrim = String(priceTxt || "").trim();
+    let price = null;
+    if (priceTrim !== "") {
+      const n = toNumber(priceTrim);
+      if (!Number.isFinite(n) || n < 0) { toast("Ugyldig pris."); return null; }
+      price = Math.round(n);
+    }
+
+    const note = await promptDialog({
+      title: "Hendelse",
+      subtitle: "Notat (valgfritt)",
+      label: "Notat",
+      value: initial.note || "",
+      placeholder: "",
+      okText: "Lagre",
+      cancelText: "Avbryt"
+    });
+    if (note === null) return null;
+
+    return {
+      id: initial.id || newId("ev"),
+      type: String(type),
+      date: dateTrim,
+      counterparty: String(counterparty || "").trim(),
+      price,
+      note: String(note || "").trim()
+    };
+  }
+
+  // ---- LAMMING ----
+  async function askLammingFields(animal, initial = {}) {
+    const date = await promptDialog({
+      title: "Lamming",
+      subtitle: `${sauDisplayName(animal)}`,
+      label: "Dato (YYYY-MM-DD)",
+      value: initial.date || todayISO(),
+      placeholder: "YYYY-MM-DD",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (date === null) return null;
+    const dateTrim = String(date || "").trim();
+    if (!isISODate(dateTrim)) { toast("Dato må være YYYY-MM-DD."); return null; }
+
+    const countTxt = await promptDialog({
+      title: "Lamming",
+      subtitle: "Antall lam",
+      label: "Antall lam",
+      value: initial.count != null ? String(initial.count) : "2",
+      placeholder: "1",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (countTxt === null) return null;
+    const count = Math.round(toNumber(countTxt));
+    if (!Number.isFinite(count) || count < 0 || count > 6) { toast("Ugyldig antall (0–6)."); return null; }
+
+    const sireTag = await promptDialog({
+      title: "Lamming",
+      subtitle: "Far (valgfritt)",
+      label: "Vær (øremerke/ID)",
+      value: initial.sireTag || "",
+      placeholder: "F.eks. NO99999",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (sireTag === null) return null;
+
+    const note = await promptDialog({
+      title: "Lamming",
+      subtitle: "Notat (valgfritt)",
+      label: "Notat",
+      value: initial.note || "",
+      placeholder: "F.eks. lett fødsel / trengte hjelp",
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (note === null) return null;
+
+    const createLambs = await selectDialog({
+      title: "Lamming",
+      subtitle: "Opprette lam som individer?",
+      label: "Opprett lam",
+      value: initial.createLambs ? "ja" : "nei",
+      options: [
+        { value: "ja", label: "Ja – opprett lam automatisk" },
+        { value: "nei", label: "Nei – kun registrer lamming" }
+      ],
+      okText: "Neste",
+      cancelText: "Avbryt"
+    });
+    if (createLambs === null) return null;
+
+    let baseTag = "";
+    if (createLambs === "ja" && count > 0) {
+      const bt = await promptDialog({
+        title: "Lamming",
+        subtitle: "Lam-ID (valgfritt)",
+        label: "Start-øremerke (valgfritt). Hvis tomt: appen lager interne ID-er.",
+        value: initial.baseTag || "",
+        placeholder: "F.eks. NO20001 (så blir NO20001, NO20002, ...)",
+        okText: "Lagre",
+        cancelText: "Avbryt"
+      });
+      if (bt === null) return null;
+      baseTag = String(bt || "").trim();
+    }
+
+    return {
+      id: initial.id || newId("lam"),
+      date: dateTrim,
+      count,
+      sireTag: String(sireTag || "").trim(),
+      note: String(note || "").trim(),
+      createLambs: createLambs === "ja",
+      baseTag
+    };
+  }
+
+  function nextNumericTag(tag) {
+    const s = String(tag || "");
+    const m = s.match(/^(.*?)(\d+)\s*$/);
+    if (!m) return "";
+    const prefix = m[1];
+    const n = Number(m[2]);
+    if (!Number.isFinite(n)) return "";
+    const width = m[2].length;
+    const nxt = String(n + 1).padStart(width, "0");
+    return `${prefix}${nxt}`;
+  }
+
+  function createLambIndividuals({ d, ewe, lambing, count }) {
+    ensureSau(d);
+    const born = lambing.date;
+
+    let tag = lambing.baseTag || "";
+    for (let i = 0; i < count; i++) {
+      const lambId = newId("sheep");
+      const lambTag = tag ? tag : `LAM-${lambId.slice(-6).toUpperCase()}`;
+
+      d.sau.individuals.push({
+        id: lambId,
+        tag: lambTag,
+        name: "",
+        sex: "Lam",
+        born,
+        breed: ewe.breed || "",
+        note: "",
+        status: "Aktiv",
+        exitReason: "",
+        motherId: ewe.id,
+        lambingId: lambing.id,
+        events: [{ id: newId("ev"), type: "Annet", date: born, counterparty: "", price: null, note: "Født (lamming registrert)" }],
+        lambings: []
+      });
+
+      const next = nextNumericTag(tag);
+      if (next) tag = next;
+    }
+  }
+
+  // =========================
+  // Views
   // =========================
   router.registerView("dashboard", {
     title: "Oversikt",
     subtitle: (d) => (d?.farm?.name ? `Gård: ${d.farm.name}` : "Sett opp gårdsnavn under «Innstillinger»"),
     actions: () => [],
     render(container, { data: d }) {
+      ensureSau(d);
       const farm = d.farm || {};
       const s = sumSkifter(d.skifter);
       const prodText = activeSummary(d.productions);
@@ -1699,14 +1725,9 @@ export async function boot() {
 
       document.getElementById("pdf_sproyte")?.addEventListener("click", () => exportSprøytePDF(d));
       document.getElementById("pdf_gjodsel")?.addEventListener("click", () => exportGjødselPDF(d));
-      document.getElementById("go_settings")?.addEventListener("click", () => go("settings"));
+      document.getElementById("go_settings")?.addEventListener("click", () => { window.location.hash = "settings"; });
     }
   });
-
-  // Sprøyting + Gjødsel + HusdyrHub + SauHub + placeholders er som før
-  // (for å spare deg for enda mer liming, beholder vi alt dette helt likt – og det fungerer med ny produksjonslogikk)
-  // --- START (identisk blokk) ---
-  // NB: Vi endrer kun "er aktivert"-sjekkene til anyTrue der det er brukt.
 
   router.registerView("sprøyting", {
     title: "Sprøyting",
@@ -1724,10 +1745,7 @@ export async function boot() {
           toast("Lagret i sprøytejournal.");
         }
       },
-      {
-        label: "Eksporter PDF",
-        onClick: async ({ data: d }) => exportSprøytePDF(d)
-      }
+      { label: "Eksporter PDF", onClick: async ({ data: d }) => exportSprøytePDF(d) }
     ],
     render(container, { data: d, setData }) {
       const rows = (d.plantProtectionLog || [])
@@ -1838,10 +1856,7 @@ export async function boot() {
           toast("Lagret i gjødseljournal.");
         }
       },
-      {
-        label: "Eksporter PDF",
-        onClick: async ({ data: d }) => exportGjødselPDF(d)
-      }
+      { label: "Eksporter PDF", onClick: async ({ data: d }) => exportGjødselPDF(d) }
     ],
     render(container, { data: d, setData }) {
       const rows = (d.fertilizerLog || [])
@@ -1935,21 +1950,24 @@ export async function boot() {
     }
   });
 
+  // =========================
+  // Husdyr HUB + Sau
+  // =========================
   router.registerView("husdyrHub", {
     title: "Husdyr",
     subtitle: "Paraply: alt husdyr samles her",
     actions: () => [],
     render(container, { data: d }) {
       const p = d.productions.husdyr;
-      const husdyrOn = anyTrue(p, HUSDYR_KEYS);
+      normalizeProductionsEnabled(d.productions);
 
-      if (!husdyrOn) {
-        container.innerHTML = `<div class="notice">Ingen husdyrproduksjoner er valgt. Gå til <b>Innstillinger → Produksjoner</b>.</div>`;
+      if (!d.productions.husdyr.enabled) {
+        container.innerHTML = `<div class="notice">Ingen husdyrproduksjoner valgt. Gå til <b>Innstillinger → Produksjoner</b>.</div>`;
         return;
       }
 
       const cards = [];
-      if (p.sau) cards.push({ title: "Sau", route: "sau", desc: "Individer, grupper, flytting, historikk." });
+      if (p.sau) cards.push({ title: "Sau", route: "sau", desc: "Individer, hendelser, flytting, lamming." });
       if (p.geit) cards.push({ title: "Geit", route: "geit", desc: "Geit (kommer mer)." });
       if (p.melkeku || p.ammeku || p.ungdyrStorfe) cards.push({ title: "Storfe", route: "storfe", desc: "Storfe (kommer mer)." });
       if (p.purke || p.slaktegris) cards.push({ title: "Gris", route: "gris", desc: "Gris (kommer mer)." });
@@ -1957,9 +1975,7 @@ export async function boot() {
       if (p.hest) cards.push({ title: "Hest", route: "hest", desc: "Hest (kommer mer)." });
 
       container.innerHTML = `
-        <div class="notice">
-          Velg produksjon. Bare det som er valgt i Produksjoner vises.
-        </div>
+        <div class="notice">Velg produksjon.</div>
 
         <div class="card" style="margin-top:12px;">
           <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08);">
@@ -1967,101 +1983,496 @@ export async function boot() {
             <div class="muted" style="font-size:12px; margin-top:6px;">Klikk for å åpne.</div>
           </div>
           <div style="padding:14px; display:grid; gap:10px;">
-            ${cards.map(c => `
+            ${cards.length ? cards.map(c => `
               <button class="btn primary" data-go="${escapeHtml(c.route)}" style="justify-content:space-between;">
                 <span><b>${escapeHtml(c.title)}</b></span>
                 <span class="muted" style="font-size:12px;">Åpne</span>
               </button>
               <div class="muted" style="font-size:12px; margin-top:-6px;">${escapeHtml(c.desc)}</div>
-            `).join("")}
+            `).join("") : `<div class="notice">Ingen underproduksjoner valgt.</div>`}
           </div>
         </div>
       `;
 
       container.querySelectorAll("[data-go]").forEach(btn => {
-        btn.addEventListener("click", () => go(btn.getAttribute("data-go")));
+        btn.addEventListener("click", () => { window.location.hash = btn.getAttribute("data-go"); });
       });
     }
   });
 
   router.registerView("sau", {
     title: "Sau",
-    subtitle: "Individer, grupper, flytting",
-    actions: () => [],
-    render(container, { data: d }) {
+    subtitle: "Individer • hendelser • flytting • lamming",
+    actions: () => [
+      {
+        label: "Nytt individ",
+        primary: true,
+        onClick: async ({ data: d, setData }) => {
+          ensureSau(d);
+          const ind = await askSauIndividualFields({});
+          if (!ind) return;
+          const next = clone(d);
+          ensureSau(next);
+          next.sau.individuals.push(ind);
+          setData(next);
+          toast("Individ lagt til.");
+        }
+      }
+    ],
+    render(container, { data: d, setData }) {
+      normalizeProductionsEnabled(d.productions);
       if (!d.productions.husdyr.sau) {
-        container.innerHTML = `<div class="notice">Sau er ikke valgt. Gå til <b>Innstillinger → Produksjoner</b>.</div>`;
+        container.innerHTML = `<div class="notice">Sau er ikke valgt under <b>Innstillinger → Produksjoner</b>.</div>`;
         return;
       }
 
-      const c = sheepCounts(d);
+      ensureSau(d);
+
+      const list = d.sau.individuals
+        .slice()
+        .sort((a, b) => (a.tag || "").localeCompare(b.tag || "", "nb"));
+
+      const countActive = list.filter(x => x.status === "Aktiv").length;
 
       container.innerHTML = `
         <div class="notice">
-          <b>Sau</b> – Leveranse 1: grupper, individer, flytting og historikk.
-          <div class="muted" style="font-size:12px; margin-top:6px;">
-            Aktiv besetning: <b>${c.totalAktiv}</b> (Søyer: ${c.sye}, Værer: ${c.vaer}, Lam: ${c.lam})
-          </div>
+          <div><b>Antall individer:</b> ${list.length} (aktive: ${countActive})</div>
+          <div class="muted" style="font-size:12px; margin-top:6px;">Trykk på et individ for detaljer (hendelser + lamming).</div>
         </div>
 
         <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Moduler</div>
-          <div style="padding:14px; display:grid; gap:10px;">
-            <button id="go_groups" class="btn primary" style="justify-content:space-between;">
-              <span><b>Grupper</b></span><span class="muted" style="font-size:12px;">Åpne</span>
-            </button>
-            <button id="go_animals" class="btn primary" style="justify-content:space-between;">
-              <span><b>Individer</b></span><span class="muted" style="font-size:12px;">Åpne</span>
-            </button>
-            <button id="go_moves" class="btn" style="justify-content:space-between;">
-              <span><b>Flyttehistorikk</b></span><span class="muted" style="font-size:12px;">Åpne</span>
-            </button>
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div style="font-weight:900;">Individer</div>
+              <div class="muted" style="font-size:12px; margin-top:6px;">Klikk for å åpne individkort.</div>
+            </div>
+            <button id="add_ind" class="btn primary">Nytt</button>
           </div>
-        </div>
 
-        <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Test</div>
           <div style="padding:14px; display:grid; gap:10px;">
-            <button id="seed" class="btn">Legg inn testdata (10 individer)</button>
-          </div>
-          <div class="muted" style="padding:0 14px 14px 14px; font-size:12px;">
-            Tipset lager 3 grupper (Søyer/Værer/Lam 2026) og 10 testindivider.
+            ${list.length ? list.map(s => `
+              <button class="btn" data-open="${escapeHtml(s.id)}" style="justify-content:space-between;">
+                <span>${escapeHtml((s.tag||"Uten øremerke") + (s.name ? ` • ${s.name}` : ""))}</span>
+                <span class="muted" style="font-size:12px;">${escapeHtml(s.sex || "")}${s.status !== "Aktiv" ? " • (ute)" : ""}</span>
+              </button>
+            `).join("") : `<div class="notice">Ingen individer. Trykk <b>Nytt</b>.</div>`}
           </div>
         </div>
       `;
 
-      document.getElementById("go_groups")?.addEventListener("click", () => go("sauGrupper"));
-      document.getElementById("go_animals")?.addEventListener("click", () => go("sauIndivider"));
-      document.getElementById("go_moves")?.addEventListener("click", () => go("sauFlytting"));
+      document.getElementById("add_ind")?.addEventListener("click", async () => {
+        const ind = await askSauIndividualFields({});
+        if (!ind) return;
+        const next = clone(d);
+        ensureSau(next);
+        next.sau.individuals.push(ind);
+        setData(next);
+        toast("Individ lagt til.");
+      });
 
-      document.getElementById("seed")?.addEventListener("click", async () => {
-        const has = (d.sheepAnimals || []).length;
-        if (has >= 5) {
+      container.querySelectorAll("[data-open]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-open");
+          window.location.hash = `sauIndivid:${id}`;
+        });
+      });
+    }
+  });
+
+  // Dynamic route handler for sauIndivid:<id>
+  router.registerView("sauIndivid", {
+    title: "Sau-individ",
+    subtitle: "Detaljer • hendelser • lamming",
+    actions: () => [],
+    render(container, { data: d, setData }) {
+      ensureSau(d);
+
+      const raw = String(window.location.hash || "").replace(/^#/, "");
+      let decoded = raw;
+      try { decoded = decodeURIComponent(raw); } catch {}
+      const m = decoded.match(/^sauIndivid:(.+)$/);
+      const id = m ? m[1] : "";
+      const idx = findSauIndex(d, id);
+      if (idx < 0) {
+        container.innerHTML = `<div class="notice">Fant ikke individ.</div>`;
+        return;
+      }
+
+      const s = d.sau.individuals[idx];
+
+      const mother = s.motherId ? d.sau.individuals.find(x => x.id === s.motherId) : null;
+
+      const evs = (s.events || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+      const lambings = (s.lambings || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+
+      container.innerHTML = `
+        <div class="notice">
+          <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">${escapeHtml(sauDisplayName(s))}</div>
+          ${mother ? `<div class="muted" style="font-size:12px;">Mor: ${escapeHtml(mother.tag || "Ukjent")}</div>` : ""}
+          ${s.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(s.note)}</div>` : ""}
+          ${s.status !== "Aktiv" ? `<div style="margin-top:8px;"><b>Status:</b> ${escapeHtml(s.status)} ${s.exitReason ? `• ${escapeHtml(s.exitReason)}` : ""}</div>` : ""}
+          <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="ind_edit" class="btn">Rediger</button>
+            <button id="ind_del" class="btn danger">Slett</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div style="font-weight:900;">Lamming</div>
+              <div class="muted" style="font-size:12px; margin-top:6px;">Registrer lamming på søye. Kan opprette lam automatisk.</div>
+            </div>
+            <button id="lam_add" class="btn primary">Ny lamming</button>
+          </div>
+
+          <div style="padding:14px; display:grid; gap:10px;">
+            ${lambings.length ? lambings.map(l => `
+              <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                  <div>
+                    <div style="font-weight:900;">${escapeHtml(fmtDate(l.date))} • ${escapeHtml(String(l.count||0))} lam</div>
+                    <div class="muted" style="font-size:12px; margin-top:4px;">
+                      ${l.sireTag ? `Far: ${escapeHtml(l.sireTag)}` : "Far: —"}
+                      ${l.createLambs ? " • Lam opprettet" : ""}
+                    </div>
+                    ${l.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(l.note)}</div>` : ""}
+                  </div>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="btn" data-lam-edit="${escapeHtml(l.id)}">Rediger</button>
+                    <button class="btn danger" data-lam-del="${escapeHtml(l.id)}">Slett</button>
+                  </div>
+                </div>
+              </div>
+            `).join("") : `<div class="notice">Ingen lamminger registrert.</div>`}
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div style="font-weight:900;">Hendelser</div>
+              <div class="muted" style="font-size:12px; margin-top:6px;">Kjøp/salg/død/flytting/annet.</div>
+            </div>
+            <button id="ev_add" class="btn primary">Ny hendelse</button>
+          </div>
+
+          <div style="padding:14px; display:grid; gap:10px;">
+            ${evs.length ? evs.map(ev => `
+              <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                  <div>
+                    <div style="font-weight:900;">${escapeHtml(fmtDate(ev.date))} • ${escapeHtml(ev.type || "")}</div>
+                    <div class="muted" style="font-size:12px; margin-top:4px;">
+                      ${ev.counterparty ? escapeHtml(ev.counterparty) : "—"}
+                      ${ev.price != null ? ` • ${escapeHtml(String(ev.price))} kr` : ""}
+                    </div>
+                    ${ev.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(ev.note)}</div>` : ""}
+                  </div>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="btn" data-ev-edit="${escapeHtml(ev.id)}">Rediger</button>
+                    <button class="btn danger" data-ev-del="${escapeHtml(ev.id)}">Slett</button>
+                  </div>
+                </div>
+              </div>
+            `).join("") : `<div class="notice">Ingen hendelser ennå.</div>`}
+          </div>
+        </div>
+      `;
+
+      document.getElementById("ind_edit")?.addEventListener("click", async () => {
+        const updated = await askSauIndividualFields(s);
+        if (!updated) return;
+
+        const next = clone(d);
+        ensureSau(next);
+        const nidx = findSauIndex(next, id);
+        if (nidx < 0) return;
+
+        next.sau.individuals[nidx] = updated;
+        setData(next);
+        toast("Oppdatert.");
+      });
+
+      document.getElementById("ind_del")?.addEventListener("click", async () => {
+        const ok = await confirmDialog({
+          title: "Slette individ?",
+          subtitle: sauDisplayName(s),
+          okText: "Slett",
+          cancelText: "Avbryt",
+          danger: true
+        });
+        if (!ok) return;
+
+        const next = clone(d);
+        ensureSau(next);
+        next.sau.individuals = next.sau.individuals.filter(x => x.id !== id);
+        setData(next);
+        window.location.hash = "sau";
+        toast("Slettet.");
+      });
+
+      // --- Hendelser ---
+      document.getElementById("ev_add")?.addEventListener("click", async () => {
+        const ev = await askSauEventFields({});
+        if (!ev) return;
+
+        const next = clone(d);
+        ensureSau(next);
+        const nidx = findSauIndex(next, id);
+        if (nidx < 0) return;
+
+        const ani = next.sau.individuals[nidx];
+        ani.events.push(ev);
+
+        // Status-regel (enkel): Død/Salg => ute
+        if (ev.type === "Død") { ani.status = "Ute"; ani.exitReason = `Død ${fmtDate(ev.date)}`; }
+        if (ev.type === "Salg") { ani.status = "Ute"; ani.exitReason = `Solgt ${fmtDate(ev.date)}`; }
+
+        setData(next);
+        toast("Hendelse lagret.");
+      });
+
+      container.querySelectorAll("[data-ev-edit]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const eid = btn.getAttribute("data-ev-edit");
+          const eidx = (s.events || []).findIndex(x => x.id === eid);
+          if (eidx < 0) return;
+
+          const current = s.events[eidx];
+          const updated = await askSauEventFields(current);
+          if (!updated) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          const nidx = findSauIndex(next, id);
+          if (nidx < 0) return;
+
+          const ani = next.sau.individuals[nidx];
+          const neidx = (ani.events || []).findIndex(x => x.id === eid);
+          if (neidx < 0) return;
+
+          ani.events[neidx] = updated;
+          setData(next);
+          toast("Oppdatert.");
+        });
+      });
+
+      container.querySelectorAll("[data-ev-del]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const eid = btn.getAttribute("data-ev-del");
+          const ev = (s.events || []).find(x => x.id === eid);
+          if (!ev) return;
+
           const ok = await confirmDialog({
-            title: "Legge inn testdata?",
-            subtitle: `Du har allerede ${has} individer. Vil du likevel legge inn testdata?`,
-            okText: "Ja, legg inn",
-            cancelText: "Avbryt"
+            title: "Slette hendelse?",
+            subtitle: `${fmtDate(ev.date)} • ${ev.type || ""}`,
+            okText: "Slett",
+            cancelText: "Avbryt",
+            danger: true
           });
           if (!ok) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          const nidx = findSauIndex(next, id);
+          if (nidx < 0) return;
+
+          const ani = next.sau.individuals[nidx];
+          ani.events = (ani.events || []).filter(x => x.id !== eid);
+          setData(next);
+          toast("Slettet.");
+        });
+      });
+
+      // --- LAMMING ---
+      document.getElementById("lam_add")?.addEventListener("click", async () => {
+        if (!isEwe(s)) { toast("Lamming kan kun registreres på søye."); return; }
+
+        const lam = await askLammingFields(s, {});
+        if (!lam) return;
+
+        const next = clone(d);
+        ensureSau(next);
+        const nidx = findSauIndex(next, id);
+        if (nidx < 0) return;
+
+        const ewe = next.sau.individuals[nidx];
+        if (!Array.isArray(ewe.lambings)) ewe.lambings = [];
+        ewe.lambings.push({
+          id: lam.id,
+          date: lam.date,
+          count: lam.count,
+          sireTag: lam.sireTag,
+          note: lam.note,
+          createLambs: lam.createLambs,
+          baseTag: lam.baseTag || ""
+        });
+
+        if (lam.createLambs && lam.count > 0) {
+          createLambIndividuals({ d: next, ewe, lambing: lam, count: lam.count });
         }
-        const next = seedSheepTestData(d);
+
         setData(next);
-        toast("Testdata lagt inn.");
+        toast("Lamming registrert.");
+      });
+
+      container.querySelectorAll("[data-lam-edit]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const lid = btn.getAttribute("data-lam-edit");
+          const lidx = (s.lambings || []).findIndex(x => x.id === lid);
+          if (lidx < 0) return;
+
+          const current = s.lambings[lidx];
+          const updated = await askLammingFields(s, current);
+          if (!updated) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          const nidx = findSauIndex(next, id);
+          if (nidx < 0) return;
+
+          const ewe = next.sau.individuals[nidx];
+          const nlidx = (ewe.lambings || []).findIndex(x => x.id === lid);
+          if (nlidx < 0) return;
+
+          // NB: Vi lar createLambs stå som den var, for å unngå “skape/slette lam” ved redigering.
+          ewe.lambings[nlidx] = {
+            id: updated.id,
+            date: updated.date,
+            count: updated.count,
+            sireTag: updated.sireTag,
+            note: updated.note,
+            createLambs: !!current.createLambs,
+            baseTag: current.baseTag || ""
+          };
+
+          setData(next);
+          toast("Lamming oppdatert.");
+        });
+      });
+
+      container.querySelectorAll("[data-lam-del]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const lid = btn.getAttribute("data-lam-del");
+          const l = (s.lambings || []).find(x => x.id === lid);
+          if (!l) return;
+
+          const ok = await confirmDialog({
+            title: "Slette lamming?",
+            subtitle: `${fmtDate(l.date)} • ${l.count || 0} lam`,
+            okText: "Slett",
+            cancelText: "Avbryt",
+            danger: true
+          });
+          if (!ok) return;
+
+          const next = clone(d);
+          ensureSau(next);
+          const nidx = findSauIndex(next, id);
+          if (nidx < 0) return;
+
+          const ewe = next.sau.individuals[nidx];
+          ewe.lambings = (ewe.lambings || []).filter(x => x.id !== lid);
+
+          // NB: Vi sletter ikke lam-individene automatisk (sikkerhet).
+          setData(next);
+          toast("Lamming slettet.");
+        });
       });
     }
   });
 
   // placeholders
-  router.registerView("geit", { title:"Geit", subtitle:"Paraply (kommer mer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Geit-modul kommer. Nå styres synlighet av Produksjoner.</div>`; }});
+  router.registerView("geit", { title:"Geit", subtitle:"Paraply (kommer mer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Geit-modul kommer.</div>`; }});
   router.registerView("storfe", { title:"Storfe", subtitle:"Paraply (kommer mer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Storfe-modul kommer.</div>`; }});
   router.registerView("gris", { title:"Gris", subtitle:"Paraply (kommer mer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Gris-modul kommer.</div>`; }});
   router.registerView("fjorfe", { title:"Fjørfe", subtitle:"Paraply (kommer mer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Fjørfe-modul kommer.</div>`; }});
   router.registerView("hest", { title:"Hest", subtitle:"Paraply (kommer mer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Hest-modul kommer.</div>`; }});
 
-  // (De andre sau-undervisning viewene sauGrupper / sauIndivider / sauFlytting er uendret og fungerer)
-  // For å unngå en mega-limejobb og feil: behold dem som i din fungerende fil.
-  // MEN: siden du ønsker "full fil": de finnes allerede i din fil og trenger ingen endring for denne justeringen.
+  // Grovfôr HUB + placeholders
+  router.registerView("grovforHub", {
+    title: "Grovfôr",
+    subtitle: "Paraply: eng/slått, beite, fôrplan, lager",
+    actions: () => [],
+    render(container, { data: d }) {
+      normalizeProductionsEnabled(d.productions);
+      if (!d.productions.grovfor.enabled) {
+        container.innerHTML = `<div class="notice">Ingen grovfôr-punkter valgt. Gå til <b>Innstillinger → Produksjoner</b>.</div>`;
+        return;
+      }
+      const p = d.productions.grovfor;
+      const items = [];
+      if (p.eng) items.push({ t:"Eng og slått", r:"grovforEng" });
+      if (p.beite) items.push({ t:"Beite", r:"grovforBeite" });
+      if (p.forplan) items.push({ t:"Fôrplan", r:"grovforForplan" });
+      if (p.lager) items.push({ t:"Grovfôrlager", r:"grovforLager" });
+
+      container.innerHTML = `
+        <div class="notice">Velg funksjon.</div>
+        <div class="card" style="margin-top:12px;">
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Grovfôr</div>
+          <div style="padding:14px; display:grid; gap:10px;">
+            ${items.length ? items.map(x=>`
+              <button class="btn primary" data-go="${escapeHtml(x.r)}" style="justify-content:space-between;">
+                <span><b>${escapeHtml(x.t)}</b></span><span class="muted" style="font-size:12px;">Åpne</span>
+              </button>
+            `).join("") : `<div class="notice">Ingen underpunkter valgt.</div>`}
+          </div>
+        </div>
+      `;
+      container.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>{ window.location.hash=b.getAttribute("data-go"); }));
+    }
+  });
+
+  router.registerView("grovforEng", { title:"Eng og slått", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Eng/slått kommer.</div>`; }});
+  router.registerView("grovforBeite", { title:"Beite", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Beite kommer.</div>`; }});
+  router.registerView("grovforForplan", { title:"Fôrplan", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Fôrplan/fôrbehov kommer.</div>`; }});
+  router.registerView("grovforLager", { title:"Grovfôrlager", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Grovfôrlager kommer.</div>`; }});
+
+  // Frukt & grønt HUB + placeholders
+  router.registerView("fgHub", {
+    title: "Frukt og grønt",
+    subtitle: "Paraply: rabarbra, potet, frukt/bær, osv.",
+    actions: () => [],
+    render(container, { data: d }) {
+      normalizeProductionsEnabled(d.productions);
+      if (!d.productions.fruktGront.enabled) {
+        container.innerHTML = `<div class="notice">Ingen frukt/grønt-punkter valgt. Gå til <b>Innstillinger → Produksjoner</b>.</div>`;
+        return;
+      }
+      const p = d.productions.fruktGront;
+      const items = [];
+      if (p.rabarbra) items.push({ t:"Rabarbra", r:"rabarbra" });
+      if (p.potet) items.push({ t:"Potet", r:"potet" });
+      if (p.fruktBaer) items.push({ t:"Frukt og bær", r:"fruktBaer" });
+      if (p.rot) items.push({ t:"Rotgrønnsaker", r:"rotgront" });
+      if (p.kal) items.push({ t:"Kålvekster", r:"kalvekster" });
+      if (p.bladLok) items.push({ t:"Løk/bladgrønt", r:"bladlok" });
+
+      container.innerHTML = `
+        <div class="notice">Velg kultur.</div>
+        <div class="card" style="margin-top:12px;">
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Frukt og grønt</div>
+          <div style="padding:14px; display:grid; gap:10px;">
+            ${items.length ? items.map(x=>`
+              <button class="btn primary" data-go="${escapeHtml(x.r)}" style="justify-content:space-between;">
+                <span><b>${escapeHtml(x.t)}</b></span><span class="muted" style="font-size:12px;">Åpne</span>
+              </button>
+            `).join("") : `<div class="notice">Ingen underpunkter valgt.</div>`}
+          </div>
+        </div>
+      `;
+      container.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>{ window.location.hash=b.getAttribute("data-go"); }));
+    }
+  });
+
+  router.registerView("rabarbra", { title:"Rabarbra", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Rabarbra-modul kommer.</div>`; }});
+  router.registerView("potet", { title:"Potet", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Potet-modul kommer.</div>`; }});
+  router.registerView("fruktBaer", { title:"Frukt og bær", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Frukt/bær-modul kommer.</div>`; }});
+  router.registerView("rotgront", { title:"Rotgrønnsaker", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Rotgrønnsaker-modul kommer.</div>`; }});
+  router.registerView("kalvekster", { title:"Kålvekster", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kålvekster-modul kommer.</div>`; }});
+  router.registerView("bladlok", { title:"Løk/bladgrønt", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Løk/bladgrønt-modul kommer.</div>`; }});
 
   // ---- init ----
   rebuildNav();
@@ -2070,7 +2481,7 @@ export async function boot() {
 }
 
 // =========================
-// Data shape (inkl. produksjoner + sau v1)
+// Data shape (inkl. produksjoner + sau)
 // =========================
 function ensureDataShape(d) {
   d = d || {};
@@ -2079,11 +2490,6 @@ function ensureDataShape(d) {
   d.plantProtectionLog = Array.isArray(d.plantProtectionLog) ? d.plantProtectionLog : [];
   d.fertilizerLog = Array.isArray(d.fertilizerLog) ? d.fertilizerLog : [];
 
-  // Sau v1
-  d.sheepGroups = Array.isArray(d.sheepGroups) ? d.sheepGroups : [];
-  d.sheepAnimals = Array.isArray(d.sheepAnimals) ? d.sheepAnimals : [];
-  d.sheepMoves = Array.isArray(d.sheepMoves) ? d.sheepMoves : [];
-
   // Produksjoner
   if (!d.productions) d.productions = {};
   if (!d.productions.husdyr) d.productions.husdyr = {};
@@ -2091,7 +2497,7 @@ function ensureDataShape(d) {
   if (!d.productions.fruktGront) d.productions.fruktGront = {};
 
   d.productions.husdyr = {
-    enabled: !!d.productions.husdyr.enabled, // settes automatisk under
+    enabled: !!d.productions.husdyr.enabled,
     sau: !!d.productions.husdyr.sau,
     geit: !!d.productions.husdyr.geit,
     melkeku: !!d.productions.husdyr.melkeku,
@@ -2106,7 +2512,7 @@ function ensureDataShape(d) {
   };
 
   d.productions.grovfor = {
-    enabled: !!d.productions.grovfor.enabled, // settes automatisk under
+    enabled: !!d.productions.grovfor.enabled,
     eng: !!d.productions.grovfor.eng,
     beite: !!d.productions.grovfor.beite,
     forplan: !!d.productions.grovfor.forplan,
@@ -2114,7 +2520,7 @@ function ensureDataShape(d) {
   };
 
   d.productions.fruktGront = {
-    enabled: !!d.productions.fruktGront.enabled, // settes automatisk under
+    enabled: !!d.productions.fruktGront.enabled,
     rabarbra: !!d.productions.fruktGront.rabarbra,
     potet: !!d.productions.fruktGront.potet,
     fruktBaer: !!d.productions.fruktGront.fruktBaer,
@@ -2123,16 +2529,21 @@ function ensureDataShape(d) {
     bladLok: !!d.productions.fruktGront.bladLok
   };
 
-  // Auto-enabled basert på underproduksjoner
-  const any = (obj, keys) => keys.some(k => !!obj[k]);
+  // Sau
+  if (!d.sau) d.sau = { individuals: [], _seeded: false };
+  if (!Array.isArray(d.sau.individuals)) d.sau.individuals = [];
+  if (d.sau._seeded == null) d.sau._seeded = false;
 
-  const HUSDYR_KEYS = ["sau","geit","melkeku","ammeku","ungdyrStorfe","purke","slaktegris","egg","slaktekylling","kalkun","hest"];
-  const GROVFOR_KEYS = ["eng","beite","forplan","lager"];
-  const FG_KEYS = ["rabarbra","potet","fruktBaer","rot","kal","bladLok"];
-
-  d.productions.husdyr.enabled = any(d.productions.husdyr, HUSDYR_KEYS);
-  d.productions.grovfor.enabled = any(d.productions.grovfor, GROVFOR_KEYS);
-  d.productions.fruktGront.enabled = any(d.productions.fruktGront, FG_KEYS);
+  // Normalize individer (inkl. lammingfelt)
+  for (const s of d.sau.individuals) {
+    if (!s.id) s.id = `sheep_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+    if (!Array.isArray(s.events)) s.events = [];
+    if (!Array.isArray(s.lambings)) s.lambings = [];
+    if (s.motherId == null) s.motherId = "";
+    if (s.lambingId == null) s.lambingId = "";
+    if (!s.status) s.status = "Aktiv";
+    if (s.exitReason == null) s.exitReason = "";
+  }
 
   return d;
 }
