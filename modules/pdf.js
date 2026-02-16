@@ -15,11 +15,7 @@ export function openPrintReport({ title, html, fileName = "rapport" }) {
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>${escapeHtml(title || "Rapport")}</title>
 <style>
-  /* ---- PRINT BASE ---- */
-  @page {
-    size: A4;
-    margin: 14mm 12mm 14mm 12mm;
-  }
+  @page { size: A4; margin: 14mm 12mm 14mm 12mm; }
   html, body { height:100%; }
   body{
     margin:0;
@@ -27,8 +23,6 @@ export function openPrintReport({ title, html, fileName = "rapport" }) {
     color:#111;
     background:#fff;
   }
-
-  /* Skjermvisning av sider */
   .sheet{
     width: 210mm;
     margin: 10mm auto;
@@ -36,14 +30,10 @@ export function openPrintReport({ title, html, fileName = "rapport" }) {
     box-shadow: 0 10px 30px rgba(0,0,0,.15);
     border: 1px solid rgba(0,0,0,.08);
   }
-
-  /* Print: ingen skygge, full bredde */
   @media print{
     .sheet{ box-shadow:none; border:none; margin:0; width:auto; }
     .no-print{ display:none !important; }
   }
-
-  /* Header / footer */
   .r-head{
     display:flex;
     gap:10mm;
@@ -71,11 +61,7 @@ export function openPrintReport({ title, html, fileName = "rapport" }) {
     line-height:1.35;
     white-space:nowrap;
   }
-
-  .r-body{
-    padding: 6mm 12mm 10mm 12mm;
-  }
-
+  .r-body{ padding: 6mm 12mm 10mm 12mm; }
   .r-foot{
     border-top: 1px solid rgba(0,0,0,.12);
     padding: 4mm 12mm 8mm 12mm;
@@ -87,12 +73,7 @@ export function openPrintReport({ title, html, fileName = "rapport" }) {
   }
   .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 
-  /* Table */
-  table{
-    width:100%;
-    border-collapse:collapse;
-    font-size: 10pt;
-  }
+  table{ width:100%; border-collapse:collapse; font-size: 10pt; }
   thead th{
     text-align:left;
     font-weight:800;
@@ -108,17 +89,10 @@ export function openPrintReport({ title, html, fileName = "rapport" }) {
   .num{ text-align:right; white-space:nowrap; }
   .muted{ color:#444; }
   .small{ font-size: 9pt; }
-  .section-title{
-    margin: 0 0 3mm 0;
-    font-size: 11pt;
-    font-weight: 800;
-  }
-
-  /* Page break helpers */
+  .section-title{ margin: 0 0 3mm 0; font-size: 11pt; font-weight: 800; }
   .break-before{ page-break-before: always; break-before: page; }
   .avoid-break{ page-break-inside: avoid; break-inside: avoid; }
 
-  /* Print button */
   .toolbar{
     position: sticky;
     top: 0;
@@ -159,7 +133,6 @@ export function openPrintReport({ title, html, fileName = "rapport" }) {
   ${html}
 
 <script>
-  // Sett dokumenttittel for filnavn-hint i noen nettlesere
   document.title = ${JSON.stringify((fileName || "rapport").replace(/[^a-z0-9_-]+/gi, "_"))};
 </script>
 </body>
@@ -174,8 +147,6 @@ export function buildSkifteReportHTML({ data, farmName = "", kommune = "" }) {
 
   const skifter = Array.isArray(data?.skifter) ? data.skifter : [];
   const sums = sumSkifter(skifter);
-
-  // Sort: navn asc
   const rows = [...skifter].sort((a,b) => (a?.navn || "").localeCompare(b?.navn || "", "nb"));
 
   const table = `
@@ -206,10 +177,7 @@ export function buildSkifteReportHTML({ data, farmName = "", kommune = "" }) {
       <div class="section-title">Oppsummering</div>
       <table>
         <thead>
-          <tr>
-            <th>Type</th>
-            <th class="num">Areal (daa)</th>
-          </tr>
+          <tr><th>Type</th><th class="num">Areal (daa)</th></tr>
         </thead>
         <tbody>
           <tr><td>Fulldyrket</td><td class="num">${fmt1(sums.fulldyrket)}</td></tr>
@@ -233,7 +201,7 @@ export function buildSkifteReportHTML({ data, farmName = "", kommune = "" }) {
       <h1 class="r-title">Skifterapport</h1>
       <p class="r-sub">
         <b>${escapeHtml(farmName || data?.farm?.name || "Gård")}</b>
-        ${kommune || data?.farm?.kommune ? ` • ${escapeHtml(kommune || data?.farm?.kommune || "")}` : ""}
+        ${(kommune || data?.farm?.kommune) ? ` • ${escapeHtml(kommune || data?.farm?.kommune || "")}` : ""}
       </p>
       <p class="r-sub small muted">Internt dokument – utskrift til PDF ved behov.</p>
     </div>
@@ -248,10 +216,7 @@ export function buildSkifteReportHTML({ data, farmName = "", kommune = "" }) {
 
   return `
     <div class="sheet">
-      <div class="r-head">
-        ${headerLeft}
-        ${headerMeta}
-      </div>
+      <div class="r-head">${headerLeft}${headerMeta}</div>
       <div class="r-body">
         <div class="section-title">Skifter</div>
         ${table}
@@ -262,7 +227,6 @@ export function buildSkifteReportHTML({ data, farmName = "", kommune = "" }) {
   `;
 }
 
-// ---- helpers ----
 function typeLabel(t) {
   if (t === "fulldyrket") return "Fulldyrket";
   if (t === "overflatedyrket") return "Overflatedyrket";
@@ -283,7 +247,6 @@ function sumSkifter(skifter) {
 function fmt1(n) {
   const x = Number(n || 0);
   const r = Math.round(x * 10) / 10;
-  // bruk komma i norsk visning
   return String(r).replace(".", ",");
 }
 function formatDateTime(d) {
