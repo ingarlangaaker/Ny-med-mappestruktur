@@ -1,20 +1,20 @@
 // modules/app.js
 // Core boot-fil for Farmapp
-// Bruker storage.js (lokal lagring) + ui.js (proffe dialoger)
-// "Min gård" bruker skjema + Lagre
+// storage.js (data) + ui.js (dialoger) + router.js (navigasjon)
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
 import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml } from "./ui.js";
+import { createRouter } from "./router.js";
 
 export async function boot() {
   const pill = document.getElementById("pillStatus");
-  const nav = document.getElementById("nav");
-  const view = document.getElementById("view");
-  const title = document.getElementById("viewTitle");
-  const sub = document.getElementById("viewSub");
-  const actions = document.getElementById("actions");
+  const navEl = document.getElementById("nav");
+  const viewEl = document.getElementById("view");
+  const titleEl = document.getElementById("viewTitle");
+  const subEl = document.getElementById("viewSub");
+  const actionsEl = document.getElementById("actions");
 
-  if (!pill || !nav || !view || !title || !sub || !actions) {
+  if (!pill || !navEl || !viewEl || !titleEl || !subEl || !actionsEl) {
     console.error("DOM ikke klar");
     return;
   }
@@ -34,83 +34,40 @@ export async function boot() {
     return ok;
   }
 
-  // ---- Enkel view-motor (router kommer senere) ----
-  const views = {};
-  let currentViewId = "dashboard";
-
-  function registerView(id, config) {
-    views[id] = config;
-  }
-
-  function setCurrentNav(id) {
-    [...nav.querySelectorAll("button")].forEach((btn) => {
-      btn.removeAttribute("aria-current");
-      if (btn.dataset.view === id) btn.setAttribute("aria-current", "page");
-    });
-  }
-
-  function renderView(id) {
-    const v = views[id];
-    if (!v) return;
-
-    currentViewId = id;
-    setCurrentNav(id);
-
-    title.textContent = v.title || "";
-    sub.textContent =
-      typeof v.subtitle === "function" ? v.subtitle(data) || "" : v.subtitle || "";
-
-    actions.innerHTML = "";
-    view.innerHTML = "";
-
-    const acts = typeof v.actions === "function" ? v.actions(data) || [] : v.actions || [];
-    acts.forEach((a) => {
-      const btn = document.createElement("button");
-      btn.className =
-        "btn" + (a.primary ? " primary" : "") + (a.danger ? " danger" : "");
-      btn.textContent = a.label;
-      btn.onclick = async () => {
-        try {
-          await a.onClick({ data, setData, rerender });
-        } catch (e) {
-          console.error(e);
-          toast("Noe gikk galt. Se console for detaljer.");
-        }
-      };
-      actions.appendChild(btn);
-    });
-
-    if (v.render) v.render(view, { data, setData, rerender });
-  }
-
-  function rerender() {
-    renderView(currentViewId);
-  }
-
   function setData(next) {
     data = next;
     persist();
-    rerender();
+    router.setCtx(ctx());  // oppdater kontekst
+    router.rerender();
   }
 
-  function renderNav() {
-    nav.innerHTML = "";
-    Object.keys(views).forEach((key) => {
-      const btn = document.createElement("button");
-      btn.dataset.view = key;
-      btn.textContent = views[key].title;
-      btn.onclick = () => renderView(key);
-      nav.appendChild(btn);
-    });
+  function ctx() {
+    return {
+      data,
+      setData,
+      rerender: () => router.rerender(),
+      toast
+    };
   }
+
+  // ---- Router ----
+  const router = createRouter({
+    navEl,
+    titleEl,
+    subEl,
+    actionsEl,
+    viewEl
+  });
+
+  router.setCtx(ctx());
 
   // =========================
   // VIEWS
   // =========================
 
-  registerView("dashboard", {
+  router.registerView("dashboard", {
     title: "Oversikt",
-    subtitle: (d) => (d.farm?.name ? `Gård: ${d.farm.name}` : "Sett opp gårdsnavn under «Min gård»"),
+    subtitle: (d) => (d?.farm?.name ? `Gård: ${d.farm.name}` : "Sett opp gårdsnavn under «Min gård»"),
     actions: () => [
       {
         label: "Eksporter data",
@@ -173,14 +130,14 @@ export async function boot() {
           <div><b>Kommune:</b> ${escapeHtml(farm.kommune || "Ikke satt")}</div>
           <div><b>Areal (dekar):</b> ${Number(farm.areal || 0)}</div>
           <div style="margin-top:10px;">
-            Gå til <b>Min gård</b> for å endre grunninfo.
+            Bruk menyen til venstre. URL støtter direkte lenker, f.eks. <b>#dashboard</b>.
           </div>
         </div>
       `;
     }
   });
 
-  registerView("minGård", {
+  router.registerView("minGård", {
     title: "Min gård",
     subtitle: "Grunninfo + sjeldne innstillinger",
     actions: () => [
@@ -247,7 +204,7 @@ export async function boot() {
         </div>
       `;
 
-      // Input styling (lett) – ui.js har sine egne, men disse inputene lever i hovedsiden
+      // input-style (enkelt)
       const styleId = "min_gard_input_style";
       if (!document.getElementById(styleId)) {
         const st = document.createElement("style");
@@ -270,8 +227,7 @@ export async function boot() {
         document.head.appendChild(st);
       }
 
-      const btn = document.getElementById("farm_save");
-      btn?.addEventListener("click", async () => {
+      document.getElementById("farm_save")?.addEventListener("click", async () => {
         const name = (document.getElementById("farm_name")?.value ?? "").trim();
         const kommune = (document.getElementById("farm_kommune")?.value ?? "").trim();
         const arealRaw = String(document.getElementById("farm_areal")?.value ?? "0")
@@ -297,7 +253,6 @@ export async function boot() {
   });
 
   // ---- init ----
-  renderNav();
-  renderView("dashboard");
+  router.init("dashboard");
   pill.textContent = "Klar";
 }
