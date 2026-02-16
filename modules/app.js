@@ -46,12 +46,12 @@ export async function boot() {
   // ---- Router ----
   const router = createRouter({ navEl, titleEl, subEl, actionsEl, viewEl });
 
-  // All navigasjon skal bruke encode (routeren din forventer det)
-  function setHash(route) {
-    const r = String(route || "").trim();
-    if (!r) return;
-    window.location.hash = encodeURIComponent(r);
-  }
+  // Viktig: IKKE encode hele ruten – ellers blir ":" til "%3A"
+function setHash(route) {
+  const r = String(route || "").trim();
+  if (!r) return;
+  window.location.hash = r;
+}
 
   // =========================
   // SAU: dynamiske routes (FIX)
