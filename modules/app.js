@@ -1,13 +1,19 @@
 // modules/app.js
-// Core boot-fil for Farmapp
+// Farmapp core
 // storage.js (data) + ui.js (dialoger) + router.js (navigasjon)
-// Stor oppdatering: Skifter under "Min gård" (CRUD + summering)
+// Inneholder: Oversikt + Min gård + Skifter (CRUD)
+// PATCH:
+//  - Knappestil: ikke gjennomsiktig (solid)
+//  - Skifte-type velges med dropdown (nedtrekk)
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
-import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml } from "./ui.js";
+import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml, el } from "./ui.js";
 import { createRouter } from "./router.js";
 
 export async function boot() {
+  // ---- Solid knappestil (override) ----
+  ensureSolidButtons();
+
   const pill = document.getElementById("pillStatus");
   const navEl = document.getElementById("nav");
   const viewEl = document.getElementById("view");
@@ -23,22 +29,11 @@ export async function boot() {
   pill.textContent = "Laster data…";
 
   // ---- Data ----
-  let data = loadData();
+  let data = ensureDataShape(loadData());
 
   function clone(obj) {
     return JSON.parse(JSON.stringify(obj));
   }
-
-  function ensureDataShape(d) {
-    d.farm = d.farm || { name: "", kommune: "", areal: 0 };
-    d.skifter = Array.isArray(d.skifter) ? d.skifter : [];
-    d.husdyr = Array.isArray(d.husdyr) ? d.husdyr : [];
-    d.fertilizerLog = Array.isArray(d.fertilizerLog) ? d.fertilizerLog : [];
-    d.plantProtectionLog = Array.isArray(d.plantProtectionLog) ? d.plantProtectionLog : [];
-    return d;
-  }
-
-  data = ensureDataShape(data);
 
   function persist() {
     const ok = saveData(data);
@@ -99,7 +94,7 @@ export async function boot() {
   }
 
   async function askSkifteFields(initial = {}) {
-    // Vi bruker flere små dialoger (stabilt på mobil)
+    // 1) navn
     const navn = await promptDialog({
       title: "Skifte",
       subtitle: "Navn / ID",
@@ -111,6 +106,7 @@ export async function boot() {
     });
     if (navn === null) return null;
 
+    // 2) areal
     const arealTxt = await promptDialog({
       title: "Skifte",
       subtitle: "Areal i dekar",
@@ -128,30 +124,27 @@ export async function boot() {
       return null;
     }
 
-    // Type velges via enkel tekst (robust) – vi kan senere gjøre dette til dropdown i ui.js
-    const typeTxt = await promptDialog({
+    // 3) type – DROPDOWN
+    const type = await selectDialog({
       title: "Skifte",
-      subtitle: "Type areal",
-      label: "Skriv: fulldyrket / overflatedyrket / innmarksbeite",
+      subtitle: "Velg type areal",
+      label: "Type",
       value: initial.type || "fulldyrket",
-      placeholder: "fulldyrket",
+      options: [
+        { value: "fulldyrket", label: "Fulldyrket" },
+        { value: "overflatedyrket", label: "Overflatedyrket" },
+        { value: "innmarksbeite", label: "Innmarksbeite" }
+      ],
       okText: "Lagre",
       cancelText: "Avbryt"
     });
-    if (typeTxt === null) return null;
-
-    const t = String(typeTxt).trim().toLowerCase();
-    const allowed = ["fulldyrket", "overflatedyrket", "innmarksbeite"];
-    if (!allowed.includes(t)) {
-      toast("Ugyldig type. Bruk: fulldyrket / overflatedyrket / innmarksbeite");
-      return null;
-    }
+    if (type === null) return null;
 
     return {
       id: initial.id || ("s_" + Math.random().toString(16).slice(2) + Date.now().toString(16)),
       navn: String(navn).trim(),
-      areal: areal,
-      type: t
+      areal,
+      type
     };
   }
 
@@ -221,13 +214,13 @@ export async function boot() {
 
       container.innerHTML = `
         <div class="notice">
-          <div style="font-weight:700; margin-bottom:6px; color:#e8f0f7;">Status</div>
+          <div style="font-weight:800; margin-bottom:6px; color:#e8f0f7;">Status</div>
           <div><b>Gård:</b> ${escapeHtml(farm.name || "Ikke satt")}</div>
           <div><b>Kommune:</b> ${escapeHtml(farm.kommune || "Ikke satt")}</div>
           <div><b>Areal (dekar):</b> ${Number(farm.areal || 0)}</div>
 
           <div style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.10);">
-            <div style="font-weight:700; margin-bottom:6px; color:#e8f0f7;">Skifter</div>
+            <div style="font-weight:800; margin-bottom:6px; color:#e8f0f7;">Skifter</div>
             <div><b>Antall:</b> ${d.skifter?.length || 0}</div>
             <div><b>Totalt (dekar):</b> ${round1(s.total)}</div>
             <div class="muted" style="margin-top:6px; font-size:12px;">
@@ -239,6 +232,7 @@ export async function boot() {
     }
   });
 
+  // Skifter under Min gård (som instruert)
   router.registerView("minGård", {
     title: "Min gård",
     subtitle: "Grunninfo + Skifter (sjeldne endringer)",
@@ -250,7 +244,6 @@ export async function boot() {
           const sk = await askSkifteFields({});
           if (!sk) return;
           const next = clone(data);
-          next.skifter = Array.isArray(next.skifter) ? next.skifter : [];
           next.skifter.push(sk);
           setData(next);
           toast("Skifte lagt til.");
@@ -270,7 +263,6 @@ export async function boot() {
           }
 
           const next = clone(data);
-          next.farm = next.farm || {};
           next.farm.name = name;
           next.farm.kommune = kommune;
           next.farm.areal = areal;
@@ -282,12 +274,12 @@ export async function boot() {
     ],
     render(container, { data: d, setData }) {
       const farm = d.farm || {};
-      const skifter = Array.isArray(d.skifter) ? d.skifter : [];
+      const skifter = d.skifter || [];
       const s = sumSkifter(skifter);
 
       container.innerHTML = `
         <div class="notice">
-          <div style="font-weight:700; margin-bottom:10px; color:#e8f0f7;">Grunninfo</div>
+          <div style="font-weight:800; margin-bottom:10px; color:#e8f0f7;">Grunninfo</div>
 
           <div style="display:grid; gap:10px;">
             <div>
@@ -314,7 +306,7 @@ export async function boot() {
         <div class="card" style="margin-top:12px;">
           <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
             <div>
-              <div style="font-weight:800;">Skifter</div>
+              <div style="font-weight:900;">Skifter</div>
               <div class="muted" style="font-size:12px; margin-top:4px;">
                 Totalt: ${round1(s.total)} daa • Fulldyrket: ${round1(s.fulldyrket)} • Overflatedyrket: ${round1(s.overflatedyrket)} • Innmarksbeite: ${round1(s.innmarksbeite)}
               </div>
@@ -324,16 +316,14 @@ export async function boot() {
 
           <div style="padding:14px;">
             ${skifter.length === 0 ? `
-              <div class="notice">
-                Ingen skifter ennå. Trykk <b>Legg til</b>.
-              </div>
+              <div class="notice">Ingen skifter ennå. Trykk <b>Legg til</b>.</div>
             ` : `
               <div style="display:grid; gap:10px;">
                 ${skifter.map((sk) => `
                   <div style="border:1px solid rgba(255,255,255,.10); border-radius:14px; padding:12px; background:rgba(255,255,255,.03);">
                     <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
                       <div>
-                        <div style="font-weight:800;">${escapeHtml(sk.navn || "Skifte")}</div>
+                        <div style="font-weight:900;">${escapeHtml(sk.navn || "Skifte")}</div>
                         <div class="muted" style="font-size:12px; margin-top:4px;">
                           ${typeLabel(sk.type)} • ${round1(sk.areal)} daa
                         </div>
@@ -355,28 +345,7 @@ export async function boot() {
         </div>
       `;
 
-      // input-style (enkelt)
-      const styleId = "min_gard_input_style";
-      if (!document.getElementById(styleId)) {
-        const st = document.createElement("style");
-        st.id = styleId;
-        st.textContent = `
-          .ui-input-fallback{
-            width:100%;
-            padding:12px 12px;
-            border-radius:14px;
-            border:1px solid rgba(255,255,255,.12);
-            background:rgba(0,0,0,.20);
-            color:inherit;
-            outline:none;
-          }
-          .ui-input-fallback:focus{
-            border-color: rgba(24,196,108,.55);
-            box-shadow: 0 0 0 4px rgba(24,196,108,.12);
-          }
-        `;
-        document.head.appendChild(st);
-      }
+      ensureFallbackInputsStyle();
 
       // Lagre gårdsinfo (knapp i view)
       document.getElementById("farm_save")?.addEventListener("click", async () => {
@@ -391,7 +360,6 @@ export async function boot() {
         }
 
         const next = clone(d);
-        next.farm = next.farm || {};
         next.farm.name = name;
         next.farm.kommune = kommune;
         next.farm.areal = areal;
@@ -405,13 +373,12 @@ export async function boot() {
         const sk = await askSkifteFields({});
         if (!sk) return;
         const next = clone(d);
-        next.skifter = Array.isArray(next.skifter) ? next.skifter : [];
         next.skifter.push(sk);
         setData(next);
         toast("Skifte lagt til.");
       });
 
-      // Rediger / slett med event delegation
+      // Rediger / slett
       container.querySelectorAll("[data-edit]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const id = btn.getAttribute("data-edit");
@@ -445,7 +412,7 @@ export async function boot() {
           if (!ok) return;
 
           const next = clone(d);
-          next.skifter = (next.skifter || []).filter(x => x.id !== id);
+          next.skifter = next.skifter.filter(x => x.id !== id);
           setData(next);
           toast("Skifte slettet.");
         });
@@ -458,7 +425,171 @@ export async function boot() {
   pill.textContent = "Klar";
 }
 
+// ---------- Helpers ----------
+
+function ensureDataShape(d) {
+  d = d || {};
+  d.farm = d.farm || { name: "", kommune: "", areal: 0 };
+  d.skifter = Array.isArray(d.skifter) ? d.skifter : [];
+  d.husdyr = Array.isArray(d.husdyr) ? d.husdyr : [];
+  d.fertilizerLog = Array.isArray(d.fertilizerLog) ? d.fertilizerLog : [];
+  d.plantProtectionLog = Array.isArray(d.plantProtectionLog) ? d.plantProtectionLog : [];
+  return d;
+}
+
 function round1(n) {
   const x = Number(n || 0);
   return Math.round(x * 10) / 10;
-} 
+}
+
+// Solid buttons override (fjerner "gjennomsiktig" look)
+function ensureSolidButtons() {
+  const id = "farmapp_solid_buttons_v1";
+  if (document.getElementById(id)) return;
+  const st = document.createElement("style");
+  st.id = id;
+  st.textContent = `
+    /* Main buttons */
+    .btn{
+      background: rgba(255,255,255,.10) !important;
+      border: 1px solid rgba(255,255,255,.18) !important;
+    }
+    .btn:hover{ background: rgba(255,255,255,.14) !important; }
+    .btn.primary{
+      background: linear-gradient(180deg, rgba(24,196,108,.38), rgba(24,196,108,.18)) !important;
+      border-color: rgba(24,196,108,.60) !important;
+    }
+    .btn.danger{
+      background: rgba(255,92,92,.18) !important;
+      border-color: rgba(255,92,92,.60) !important;
+    }
+
+    /* Nav buttons */
+    .nav button{
+      background: rgba(255,255,255,.08) !important;
+      border-color: rgba(255,255,255,.14) !important;
+    }
+    .nav button[aria-current="page"]{
+      background: rgba(24,196,108,.18) !important;
+      border-color: rgba(24,196,108,.55) !important;
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+// Input-stil for Min gård
+function ensureFallbackInputsStyle() {
+  const styleId = "min_gard_input_style";
+  if (document.getElementById(styleId)) return;
+  const st = document.createElement("style");
+  st.id = styleId;
+  st.textContent = `
+    .ui-input-fallback{
+      width:100%;
+      padding:12px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(0,0,0,.24);
+      color:inherit;
+      outline:none;
+    }
+    .ui-input-fallback:focus{
+      border-color: rgba(24,196,108,.60);
+      box-shadow: 0 0 0 4px rgba(24,196,108,.14);
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+// Dropdown-dialog (nedtrekk) – uten å endre ui.js
+function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", options = [], okText = "OK", cancelText = "Avbryt" }) {
+  return new Promise((resolve) => {
+    ensureSelectDialogStyles();
+
+    const select = el("select", { class: "ui-select" }, []);
+    for (const opt of options) {
+      const o = el("option", { value: opt.value }, opt.label);
+      if (String(opt.value) === String(value)) o.selected = true;
+      select.appendChild(o);
+    }
+
+    const bodyNode = el("div", {}, [
+      el("div", { class: "ui-field" }, [
+        label ? el("div", { class: "ui-label" }, label) : null,
+        select
+      ]),
+      el("div", { class: "ui-small" }, "Tips: ESC eller trykk utenfor for å avbryte.")
+    ]);
+
+    // Bygg modal med samme klasse-navn som ui.js bruker
+    const backdrop = el("div", { class: "ui-backdrop" });
+    const modal = el("div", { class: "ui-modal", role: "dialog", "aria-modal": "true" });
+    const head = el("div", { class: "ui-modal-head" }, [
+      el("div", { class: "ui-modal-title" }, title),
+      subtitle ? el("div", { class: "ui-modal-sub" }, subtitle) : null
+    ]);
+    const body = el("div", { class: "ui-modal-body" }, bodyNode);
+    const acts = el("div", { class: "ui-actions" }, [
+      el("button", {
+        class: "ui-btn",
+        onclick: () => { cleanup(); resolve(null); }
+      }, cancelText),
+      el("button", {
+        class: "ui-btn primary",
+        onclick: () => { const v = String(select.value); cleanup(); resolve(v); }
+      }, okText)
+    ]);
+
+    modal.appendChild(head);
+    modal.appendChild(body);
+    modal.appendChild(acts);
+    backdrop.appendChild(modal);
+
+    function onKey(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cleanup();
+        resolve(null);
+      }
+    }
+    function cleanup() {
+      window.removeEventListener("keydown", onKey, true);
+      backdrop.remove();
+    }
+
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) {
+        cleanup();
+        resolve(null);
+      }
+    });
+
+    window.addEventListener("keydown", onKey, true);
+    document.body.appendChild(backdrop);
+    setTimeout(() => select.focus(), 0);
+  });
+}
+
+function ensureSelectDialogStyles() {
+  const id = "farmapp_select_dialog_styles_v1";
+  if (document.getElementById(id)) return;
+  const st = document.createElement("style");
+  st.id = id;
+  st.textContent = `
+    .ui-select{
+      width:100%;
+      padding:12px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(0,0,0,.24);
+      color:inherit;
+      outline:none;
+      appearance:auto;
+    }
+    .ui-select:focus{
+      border-color: rgba(24,196,108,.60);
+      box-shadow: 0 0 0 4px rgba(24,196,108,.14);
+    }
+  `;
+  document.head.appendChild(st);
+}
