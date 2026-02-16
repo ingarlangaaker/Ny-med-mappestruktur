@@ -2,17 +2,18 @@
 // Farmapp core
 // storage.js (data) + ui.js (dialoger) + router.js (navigasjon)
 // Inneholder: Oversikt + Min gård + Skifter (CRUD)
-// PATCH:
-//  - Knappestil: ikke gjennomsiktig (solid)
-//  - Skifte-type velges med dropdown (nedtrekk)
+// + PDF: Skifterapport (Print -> Lagre som PDF)
+// Proff UI: solide knapper + dropdown for skifte-type + tette dialoger (via ui.js)
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
 import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml, el } from "./ui.js";
 import { createRouter } from "./router.js";
+import { openPrintReport, buildSkifteReportHTML } from "./pdf.js";
 
 export async function boot() {
-  // ---- Solid knappestil (override) ----
   ensureSolidButtons();
+  ensureFallbackInputsStyle();
+  ensureSelectDialogStyles();
 
   const pill = document.getElementById("pillStatus");
   const navEl = document.getElementById("nav");
@@ -70,18 +71,13 @@ export async function boot() {
   }
 
   function sumSkifter(skifter) {
-    const out = {
-      total: 0,
-      fulldyrket: 0,
-      overflatedyrket: 0,
-      innmarksbeite: 0
-    };
+    const out = { total: 0, fulldyrket: 0, overflatedyrket: 0, innmarksbeite: 0 };
     for (const s of skifter || []) {
-      const a = Number(s.areal || 0);
+      const a = Number(s?.areal || 0);
       out.total += a;
-      if (s.type === "fulldyrket") out.fulldyrket += a;
-      else if (s.type === "overflatedyrket") out.overflatedyrket += a;
-      else if (s.type === "innmarksbeite") out.innmarksbeite += a;
+      if (s?.type === "fulldyrket") out.fulldyrket += a;
+      else if (s?.type === "overflatedyrket") out.overflatedyrket += a;
+      else if (s?.type === "innmarksbeite") out.innmarksbeite += a;
     }
     return out;
   }
@@ -124,7 +120,7 @@ export async function boot() {
       return null;
     }
 
-    // 3) type – DROPDOWN
+    // 3) type – DROPDOWN (nedtrekk)
     const type = await selectDialog({
       title: "Skifte",
       subtitle: "Velg type areal",
@@ -156,6 +152,27 @@ export async function boot() {
     title: "Oversikt",
     subtitle: (d) => (d?.farm?.name ? `Gård: ${d.farm.name}` : "Sett opp gårdsnavn under «Min gård»"),
     actions: () => [
+      {
+        label: "Skifterapport (PDF)",
+        primary: true,
+        onClick: async ({ data: d }) => {
+          try {
+            const html = buildSkifteReportHTML({
+              data: d,
+              farmName: d?.farm?.name || "",
+              kommune: d?.farm?.kommune || ""
+            });
+            openPrintReport({
+              title: "Skifterapport",
+              html,
+              fileName: "skifterapport"
+            });
+          } catch (e) {
+            console.error(e);
+            toast("Kunne ikke åpne rapport. Sjekk at popups er tillatt.");
+          }
+        }
+      },
       {
         label: "Eksporter data",
         onClick: async () => {
@@ -214,17 +231,20 @@ export async function boot() {
 
       container.innerHTML = `
         <div class="notice">
-          <div style="font-weight:800; margin-bottom:6px; color:#e8f0f7;">Status</div>
+          <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">Status</div>
           <div><b>Gård:</b> ${escapeHtml(farm.name || "Ikke satt")}</div>
           <div><b>Kommune:</b> ${escapeHtml(farm.kommune || "Ikke satt")}</div>
           <div><b>Areal (dekar):</b> ${Number(farm.areal || 0)}</div>
 
           <div style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.10);">
-            <div style="font-weight:800; margin-bottom:6px; color:#e8f0f7;">Skifter</div>
+            <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">Skifter</div>
             <div><b>Antall:</b> ${d.skifter?.length || 0}</div>
             <div><b>Totalt (dekar):</b> ${round1(s.total)}</div>
             <div class="muted" style="margin-top:6px; font-size:12px;">
               Fulldyrket: ${round1(s.fulldyrket)} • Overflatedyrket: ${round1(s.overflatedyrket)} • Innmarksbeite: ${round1(s.innmarksbeite)}
+            </div>
+            <div class="muted" style="margin-top:8px; font-size:12px;">
+              Tips: Bruk knappen <b>Skifterapport (PDF)</b> for utskrift.
             </div>
           </div>
         </div>
@@ -232,7 +252,7 @@ export async function boot() {
     }
   });
 
-  // Skifter under Min gård (som instruert)
+  // Skifter under Min gård (sjeldne endringer – slik du instruerte)
   router.registerView("minGård", {
     title: "Min gård",
     subtitle: "Grunninfo + Skifter (sjeldne endringer)",
@@ -279,7 +299,7 @@ export async function boot() {
 
       container.innerHTML = `
         <div class="notice">
-          <div style="font-weight:800; margin-bottom:10px; color:#e8f0f7;">Grunninfo</div>
+          <div style="font-weight:900; margin-bottom:10px; color:#e8f0f7;">Grunninfo</div>
 
           <div style="display:grid; gap:10px;">
             <div>
@@ -304,7 +324,7 @@ export async function boot() {
         </div>
 
         <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; align-items:center; justify-content:space-between; gap:10px;">
             <div>
               <div style="font-weight:900;">Skifter</div>
               <div class="muted" style="font-size:12px; margin-top:4px;">
@@ -320,7 +340,7 @@ export async function boot() {
             ` : `
               <div style="display:grid; gap:10px;">
                 ${skifter.map((sk) => `
-                  <div style="border:1px solid rgba(255,255,255,.10); border-radius:14px; padding:12px; background:rgba(255,255,255,.03);">
+                  <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
                     <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
                       <div>
                         <div style="font-weight:900;">${escapeHtml(sk.navn || "Skifte")}</div>
@@ -345,9 +365,6 @@ export async function boot() {
         </div>
       `;
 
-      ensureFallbackInputsStyle();
-
-      // Lagre gårdsinfo (knapp i view)
       document.getElementById("farm_save")?.addEventListener("click", async () => {
         const name = (document.getElementById("farm_name")?.value ?? "").trim();
         const kommune = (document.getElementById("farm_kommune")?.value ?? "").trim();
@@ -368,7 +385,6 @@ export async function boot() {
         toast("Gårdsinfo lagret.");
       });
 
-      // Legg til skifte (knapp i view)
       document.getElementById("skifte_add")?.addEventListener("click", async () => {
         const sk = await askSkifteFields({});
         if (!sk) return;
@@ -378,7 +394,6 @@ export async function boot() {
         toast("Skifte lagt til.");
       });
 
-      // Rediger / slett
       container.querySelectorAll("[data-edit]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const id = btn.getAttribute("data-edit");
@@ -425,7 +440,7 @@ export async function boot() {
   pill.textContent = "Klar";
 }
 
-// ---------- Helpers ----------
+// ---------- helpers ----------
 
 function ensureDataShape(d) {
   d = d || {};
@@ -442,44 +457,43 @@ function round1(n) {
   return Math.round(x * 10) / 10;
 }
 
-// Solid buttons override (fjerner "gjennomsiktig" look)
+// Solid knapper / nav-følelse (tett, mindre “glass”)
 function ensureSolidButtons() {
-  const id = "farmapp_solid_buttons_v1";
+  const id = "farmapp_solid_buttons_v2";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
   st.textContent = `
-    /* Main buttons */
     .btn{
-      background: rgba(255,255,255,.10) !important;
+      background: rgba(255,255,255,.12) !important;
       border: 1px solid rgba(255,255,255,.18) !important;
     }
-    .btn:hover{ background: rgba(255,255,255,.14) !important; }
+    .btn:hover{ background: rgba(255,255,255,.16) !important; }
     .btn.primary{
-      background: linear-gradient(180deg, rgba(24,196,108,.38), rgba(24,196,108,.18)) !important;
-      border-color: rgba(24,196,108,.60) !important;
+      background: #0f2a1f !important;
+      border-color: rgba(24,196,108,.65) !important;
     }
     .btn.danger{
-      background: rgba(255,92,92,.18) !important;
-      border-color: rgba(255,92,92,.60) !important;
+      background: #3a1a1a !important;
+      border-color: rgba(255,92,92,.65) !important;
     }
 
-    /* Nav buttons */
+    /* Nav buttons (dersom .nav finnes i index.css) */
     .nav button{
-      background: rgba(255,255,255,.08) !important;
+      background:#18222b !important;
       border-color: rgba(255,255,255,.14) !important;
     }
     .nav button[aria-current="page"]{
-      background: rgba(24,196,108,.18) !important;
+      background:#0f2a1f !important;
       border-color: rgba(24,196,108,.55) !important;
     }
   `;
   document.head.appendChild(st);
 }
 
-// Input-stil for Min gård
+// Inputstil i "Min gård"
 function ensureFallbackInputsStyle() {
-  const styleId = "min_gard_input_style";
+  const styleId = "min_gard_input_style_v2";
   if (document.getElementById(styleId)) return;
   const st = document.createElement("style");
   st.id = styleId;
@@ -489,7 +503,7 @@ function ensureFallbackInputsStyle() {
       padding:12px 12px;
       border-radius:14px;
       border:1px solid rgba(255,255,255,.16);
-      background:rgba(0,0,0,.24);
+      background:#0f1720;
       color:inherit;
       outline:none;
     }
@@ -504,8 +518,6 @@ function ensureFallbackInputsStyle() {
 // Dropdown-dialog (nedtrekk) – uten å endre ui.js
 function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", options = [], okText = "OK", cancelText = "Avbryt" }) {
   return new Promise((resolve) => {
-    ensureSelectDialogStyles();
-
     const select = el("select", { class: "ui-select" }, []);
     for (const opt of options) {
       const o = el("option", { value: opt.value }, opt.label);
@@ -521,7 +533,7 @@ function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", o
       el("div", { class: "ui-small" }, "Tips: ESC eller trykk utenfor for å avbryte.")
     ]);
 
-    // Bygg modal med samme klasse-navn som ui.js bruker
+    // Modal-struktur matcher ui.js sine klasser
     const backdrop = el("div", { class: "ui-backdrop" });
     const modal = el("div", { class: "ui-modal", role: "dialog", "aria-modal": "true" });
     const head = el("div", { class: "ui-modal-head" }, [
@@ -530,14 +542,8 @@ function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", o
     ]);
     const body = el("div", { class: "ui-modal-body" }, bodyNode);
     const acts = el("div", { class: "ui-actions" }, [
-      el("button", {
-        class: "ui-btn",
-        onclick: () => { cleanup(); resolve(null); }
-      }, cancelText),
-      el("button", {
-        class: "ui-btn primary",
-        onclick: () => { const v = String(select.value); cleanup(); resolve(v); }
-      }, okText)
+      el("button", { class: "ui-btn", onclick: () => { cleanup(); resolve(null); } }, cancelText),
+      el("button", { class: "ui-btn primary", onclick: () => { const v = String(select.value); cleanup(); resolve(v); } }, okText)
     ]);
 
     modal.appendChild(head);
@@ -571,7 +577,7 @@ function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", o
 }
 
 function ensureSelectDialogStyles() {
-  const id = "farmapp_select_dialog_styles_v1";
+  const id = "farmapp_select_dialog_styles_v2";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
@@ -581,7 +587,7 @@ function ensureSelectDialogStyles() {
       padding:12px 12px;
       border-radius:14px;
       border:1px solid rgba(255,255,255,.16);
-      background:rgba(0,0,0,.24);
+      background:#0f1720;
       color:inherit;
       outline:none;
       appearance:auto;
