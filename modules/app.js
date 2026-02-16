@@ -1,9 +1,7 @@
 // modules/app.js
-// Farmapp core
-// storage.js (data) + ui.js (dialoger) + router.js (navigasjon)
-// Inneholder: Oversikt + Min gård + Skifter (CRUD)
-// + PDF: Skifterapport (Print -> Lagre som PDF) via dynamisk import (robust)
-// Proff UI: solide knapper + dropdown for skifte-type + tette dialoger (via ui.js)
+// Farmapp core (robust)
+// Oversikt + Min gård + Skifter (CRUD)
+// PDF: Skifterapport via dynamisk import, med knapp både i Actions og i selve Oversikt-visningen
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
 import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml, el } from "./ui.js";
@@ -61,6 +59,25 @@ export async function boot() {
   }
 
   router.setCtx(ctx());
+
+  async function openSkiftePdf(d) {
+    try {
+      const pdf = await import("./pdf.js");
+      const html = pdf.buildSkifteReportHTML({
+        data: d,
+        farmName: d?.farm?.name || "",
+        kommune: d?.farm?.kommune || ""
+      });
+      pdf.openPrintReport({
+        title: "Skifterapport",
+        html,
+        fileName: "skifterapport"
+      });
+    } catch (e) {
+      console.error(e);
+      toast("PDF fungerer ikke ennå. Sjekk at filen finnes: modules/pdf.js, og at popups er tillatt.");
+    }
+  }
 
   // ---- Utils ----
   function toNumber(v) {
@@ -151,25 +168,7 @@ export async function boot() {
       {
         label: "Skifterapport (PDF)",
         primary: true,
-        onClick: async ({ data: d }) => {
-          try {
-            // Dynamisk import => appen laster selv om pdf.js mangler
-            const pdf = await import("./pdf.js");
-            const html = pdf.buildSkifteReportHTML({
-              data: d,
-              farmName: d?.farm?.name || "",
-              kommune: d?.farm?.kommune || ""
-            });
-            pdf.openPrintReport({
-              title: "Skifterapport",
-              html,
-              fileName: "skifterapport"
-            });
-          } catch (e) {
-            console.error(e);
-            toast("PDF-modul mangler eller popups er blokkert. Sjekk at modules/pdf.js finnes og at popups er tillatt.");
-          }
-        }
+        onClick: async ({ data: d }) => openSkiftePdf(d)
       },
       {
         label: "Eksporter data",
@@ -234,7 +233,16 @@ export async function boot() {
           <div><b>Kommune:</b> ${escapeHtml(farm.kommune || "Ikke satt")}</div>
           <div><b>Areal (dekar):</b> ${Number(farm.areal || 0)}</div>
 
-          <div style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.10);">
+          <div style="margin-top:10px;">
+            <button id="pdf_skifter_btn" class="btn primary" style="width:100%; justify-content:center;">
+              Skifterapport (PDF)
+            </button>
+            <div class="muted" style="margin-top:8px; font-size:12px;">
+              Åpner utskriftsvisning → velg <b>Skriv ut</b> → <b>Lagre som PDF</b>.
+            </div>
+          </div>
+
+          <div style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.10);">
             <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">Skifter</div>
             <div><b>Antall:</b> ${d.skifter?.length || 0}</div>
             <div><b>Totalt (dekar):</b> ${round1(s.total)}</div>
@@ -244,6 +252,8 @@ export async function boot() {
           </div>
         </div>
       `;
+
+      document.getElementById("pdf_skifter_btn")?.addEventListener("click", () => openSkiftePdf(d));
     }
   });
 
@@ -261,28 +271,6 @@ export async function boot() {
           next.skifter.push(sk);
           setData(next);
           toast("Skifte lagt til.");
-        }
-      },
-      {
-        label: "Lagre gårdsinfo",
-        onClick: async ({ data, setData }) => {
-          const name = (document.getElementById("farm_name")?.value ?? "").trim();
-          const kommune = (document.getElementById("farm_kommune")?.value ?? "").trim();
-          const arealRaw = String(document.getElementById("farm_areal")?.value ?? "0").trim().replace(",", ".");
-          const areal = Number(arealRaw);
-
-          if (!Number.isFinite(areal) || areal < 0) {
-            toast("Ugyldig areal. Bruk et tall (f.eks. 15 eller 15,5).");
-            return;
-          }
-
-          const next = clone(data);
-          next.farm.name = name;
-          next.farm.kommune = kommune;
-          next.farm.areal = areal;
-
-          setData(next);
-          toast("Gårdsinfo lagret.");
         }
       }
     ],
@@ -433,9 +421,6 @@ function ensureDataShape(d) {
   d = d || {};
   d.farm = d.farm || { name: "", kommune: "", areal: 0 };
   d.skifter = Array.isArray(d.skifter) ? d.skifter : [];
-  d.husdyr = Array.isArray(d.husdyr) ? d.husdyr : [];
-  d.fertilizerLog = Array.isArray(d.fertilizerLog) ? d.fertilizerLog : [];
-  d.plantProtectionLog = Array.isArray(d.plantProtectionLog) ? d.plantProtectionLog : [];
   return d;
 }
 
@@ -445,49 +430,27 @@ function round1(n) {
 }
 
 function ensureSolidButtons() {
-  const id = "farmapp_solid_buttons_v3";
+  const id = "farmapp_solid_buttons_v4";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
   st.textContent = `
-    .btn{
-      background: rgba(255,255,255,.12) !important;
-      border: 1px solid rgba(255,255,255,.18) !important;
-    }
-    .btn.primary{
-      background: #0f2a1f !important;
-      border-color: rgba(24,196,108,.65) !important;
-    }
-    .btn.danger{
-      background: #3a1a1a !important;
-      border-color: rgba(255,92,92,.65) !important;
-    }
-    .nav button{
-      background:#18222b !important;
-      border-color: rgba(255,255,255,.14) !important;
-    }
-    .nav button[aria-current="page"]{
-      background:#0f2a1f !important;
-      border-color: rgba(24,196,108,.55) !important;
-    }
+    .btn{ background: rgba(255,255,255,.12) !important; border: 1px solid rgba(255,255,255,.18) !important; }
+    .btn.primary{ background:#0f2a1f !important; border-color: rgba(24,196,108,.65) !important; }
+    .btn.danger{ background:#3a1a1a !important; border-color: rgba(255,92,92,.65) !important; }
   `;
   document.head.appendChild(st);
 }
-
 function ensureFallbackInputsStyle() {
-  const styleId = "min_gard_input_style_v3";
-  if (document.getElementById(styleId)) return;
+  const id = "min_gard_input_style_v4";
+  if (document.getElementById(id)) return;
   const st = document.createElement("style");
-  st.id = styleId;
+  st.id = id;
   st.textContent = `
     .ui-input-fallback{
-      width:100%;
-      padding:12px 12px;
-      border-radius:14px;
+      width:100%; padding:12px 12px; border-radius:14px;
       border:1px solid rgba(255,255,255,.16);
-      background:#0f1720;
-      color:inherit;
-      outline:none;
+      background:#0f1720; color:inherit; outline:none;
     }
     .ui-input-fallback:focus{
       border-color: rgba(24,196,108,.60);
@@ -496,7 +459,25 @@ function ensureFallbackInputsStyle() {
   `;
   document.head.appendChild(st);
 }
-
+function ensureSelectDialogStyles() {
+  const id = "farmapp_select_dialog_styles_v4";
+  if (document.getElementById(id)) return;
+  const st = document.createElement("style");
+  st.id = id;
+  st.textContent = `
+    .ui-select{
+      width:100%; padding:12px 12px; border-radius:14px;
+      border:1px solid rgba(255,255,255,.16);
+      background:#0f1720; color:inherit; outline:none;
+      appearance:auto;
+    }
+    .ui-select:focus{
+      border-color: rgba(24,196,108,.60);
+      box-shadow: 0 0 0 4px rgba(24,196,108,.14);
+    }
+  `;
+  document.head.appendChild(st);
+}
 function selectDialog({ title="Velg", subtitle="", label="", value="", options=[], okText="OK", cancelText="Avbryt" }) {
   return new Promise((resolve) => {
     const select = el("select", { class: "ui-select" }, []);
@@ -542,40 +523,12 @@ function selectDialog({ title="Velg", subtitle="", label="", value="", options=[
       window.removeEventListener("keydown", onKey, true);
       backdrop.remove();
     }
-
     backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) {
-        cleanup();
-        resolve(null);
-      }
+      if (e.target === backdrop) { cleanup(); resolve(null); }
     });
 
     window.addEventListener("keydown", onKey, true);
     document.body.appendChild(backdrop);
     setTimeout(() => select.focus(), 0);
   });
-}
-
-function ensureSelectDialogStyles() {
-  const id = "farmapp_select_dialog_styles_v3";
-  if (document.getElementById(id)) return;
-  const st = document.createElement("style");
-  st.id = id;
-  st.textContent = `
-    .ui-select{
-      width:100%;
-      padding:12px 12px;
-      border-radius:14px;
-      border:1px solid rgba(255,255,255,.16);
-      background:#0f1720;
-      color:inherit;
-      outline:none;
-      appearance:auto;
-    }
-    .ui-select:focus{
-      border-color: rgba(24,196,108,.60);
-      box-shadow: 0 0 0 4px rgba(24,196,108,.14);
-    }
-  `;
-  document.head.appendChild(st);
 }
