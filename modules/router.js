@@ -1,137 +1,123 @@
 // modules/router.js
-// Enkel router for Farmapp (uten frameworks)
-// Gir:
-// - registerView()
-// - go(viewId)
-// - rerender()
-// - init(defaultView)
-// - enkel hash-støtte (#dashboard osv.)
+// Minimal hash-router for Farmapp
+// Viktig: Router bygger IKKE meny. Menyen styres 100% fra app.js (rebuildNav).
 
 export function createRouter({ navEl, titleEl, subEl, actionsEl, viewEl }) {
-  if (!navEl || !titleEl || !subEl || !actionsEl || !viewEl) {
-    throw new Error("Router: mangler nødvendige DOM-elementer");
-  }
-
-  const views = {};
-  let currentViewId = null;
+  const views = new Map();
   let ctx = null;
+  let defaultRoute = "dashboard";
 
-  function setCtx(nextCtx) {
-    ctx = nextCtx;
+  function clear(el) {
+    if (!el) return;
+    while (el.firstChild) el.removeChild(el.firstChild);
   }
 
-  function registerView(id, config) {
-    views[id] = config;
+  function btn({ label, onClick, primary, danger }) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn";
+    if (primary) b.classList.add("primary");
+    if (danger) b.classList.add("danger");
+    b.textContent = label || "Knapp";
+    b.addEventListener("click", () => onClick?.(ctx));
+    return b;
   }
 
-  function setCurrentNav(id) {
-    [...navEl.querySelectorAll("button")].forEach((btn) => {
-      btn.removeAttribute("aria-current");
-      if (btn.dataset.view === id) btn.setAttribute("aria-current", "page");
-    });
+  function getRouteFromHash() {
+    const h = String(window.location.hash || "").replace(/^#/, "").trim();
+    return h || defaultRoute;
   }
 
-  function renderNav() {
-    navEl.innerHTML = "";
-    Object.keys(views).forEach((key) => {
-      const v = views[key];
-      const btn = document.createElement("button");
-      btn.dataset.view = key;
-      btn.textContent = v.title || key;
-      btn.onclick = () => go(key);
-      navEl.appendChild(btn);
-    });
+  function setTitleAndSub(view, data) {
+    const t = view?.title ?? "";
+    const s = view?.subtitle ?? "";
+
+    titleEl.textContent = typeof t === "function" ? String(t(data) || "") : String(t || "");
+    subEl.textContent = typeof s === "function" ? String(s(data) || "") : String(s || "");
   }
 
-  async function renderView(id) {
-    const v = views[id];
-    if (!v) return;
+  function renderActions(view, data) {
+    clear(actionsEl);
 
-    currentViewId = id;
-    setCurrentNav(id);
+    let acts = [];
+    if (typeof view?.actions === "function") acts = view.actions(ctx) || [];
+    else if (Array.isArray(view?.actions)) acts = view.actions;
 
-    titleEl.textContent = v.title || "";
-
-    const subtitle =
-      typeof v.subtitle === "function" ? (v.subtitle(ctx?.data) || "") : (v.subtitle || "");
-    subEl.textContent = subtitle;
-
-    actionsEl.innerHTML = "";
-    viewEl.innerHTML = "";
-
-    // actions
-    const acts = typeof v.actions === "function" ? (v.actions(ctx?.data) || []) : (v.actions || []);
     for (const a of acts) {
-      const btn = document.createElement("button");
-      btn.className = "btn" + (a.primary ? " primary" : "") + (a.danger ? " danger" : "");
-      btn.textContent = a.label || "Knapp";
-      btn.onclick = async () => {
-        try {
-          await a.onClick?.(ctx);
-        } catch (e) {
-          console.error(e);
-          ctx?.toast?.("Noe gikk galt. Se console for detaljer.");
-        }
-      };
-      actionsEl.appendChild(btn);
+      actionsEl.appendChild(
+        btn({
+          label: a.label,
+          primary: !!a.primary,
+          danger: !!a.danger,
+          onClick: (c) => a.onClick?.({ ...(c || {}), data, setData: c?.setData })
+        })
+      );
+    }
+  }
+
+  function renderView(route) {
+    const view = views.get(route) || views.get(defaultRoute);
+
+    // Hvis route ikke finnes, hopp til default uten å spamme historikk
+    if (!views.get(route) && route !== defaultRoute) {
+      window.location.replace(`#${defaultRoute}`);
+      return;
     }
 
-    // render
+    const data = ctx?.data;
+    setTitleAndSub(view, data);
+    renderActions(view, data);
+
+    clear(viewEl);
+
+    // view.render(container, ctx)
     try {
-      await v.render?.(viewEl, ctx);
+      view?.render?.(viewEl, ctx);
     } catch (e) {
       console.error(e);
       viewEl.innerHTML = `
         <div class="notice">
-          <b>Feil i visning:</b> ${escapeHtml(e?.message || "Ukjent feil")}
+          <b>Feil i visning:</b> ${escapeHtml(String(e?.message || e))}
         </div>
       `;
     }
   }
 
-  function rerender() {
-    if (!currentViewId) return;
-    renderView(currentViewId);
+  function onHashChange() {
+    renderView(getRouteFromHash());
   }
 
-  function go(id, { updateHash = true } = {}) {
-    if (!views[id]) return;
-    if (updateHash) {
-      location.hash = "#" + encodeURIComponent(id);
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  return {
+    registerView(route, def) {
+      views.set(String(route), def || {});
+    },
+    setCtx(nextCtx) {
+      ctx = nextCtx;
+    },
+    init(route) {
+      defaultRoute = String(route || defaultRoute);
+      window.removeEventListener("hashchange", onHashChange);
+      window.addEventListener("hashchange", onHashChange);
+
+      // sørg for at vi har en gyldig hash
+      const r = getRouteFromHash();
+      if (!views.get(r)) {
+        window.location.replace(`#${defaultRoute}`);
+        return;
+      }
+      renderView(r);
+    },
+    rerender() {
+      renderView(getRouteFromHash());
     }
-    renderView(id);
-  }
-
-  function parseHash() {
-    const h = (location.hash || "").replace(/^#/, "");
-    const id = decodeURIComponent(h || "");
-    return id || null;
-  }
-
-  function init(defaultViewId) {
-    renderNav();
-
-    const fromHash = parseHash();
-    const start = (fromHash && views[fromHash]) ? fromHash : defaultViewId;
-
-    // hash change
-    window.addEventListener("hashchange", () => {
-      const id = parseHash();
-      if (id && views[id]) renderView(id);
-    });
-
-    go(start, { updateHash: true });
-  }
-
-  return { setCtx, registerView, init, go, rerender, views };
-}
-
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[m]));
-}
+  };
+} 
