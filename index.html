@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f14" />
+  <title>Farmapp</title>
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --card:#121a22;
+      --text:#e8f0f7;
+      --muted:#8aa0b5;
+      --line:#243242;
+
+      --accent:#18c46c;
+      --accent2:#0ea85a;
+      --danger:#ff5c5c;
+
+      --radius:18px;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --max: 1100px;
+    }
+    *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    body{
+      margin:0;
+      background:radial-gradient(1200px 800px at 30% 0%, #122231 0%, var(--bg) 60%);
+      color:var(--text);
+    }
+    a{color:inherit}
+    .wrap{max-width:var(--max); margin:0 auto; padding:16px 14px 120px;}
+    .topbar{
+      position:sticky; top:0; z-index:50;
+      backdrop-filter: blur(10px);
+      background:rgba(11,15,20,.72);
+      border-bottom:1px solid rgba(255,255,255,.06);
+    }
+    .topbar-inner{
+      max-width:var(--max); margin:0 auto; padding:10px 14px;
+      display:flex; align-items:center; gap:10px;
+    }
+    .brand{
+      display:flex; align-items:center; gap:10px;
+      font-weight:800; letter-spacing:.2px;
+    }
+    .dot{width:10px;height:10px;border-radius:50%;background:var(--accent); box-shadow:0 0 0 6px rgba(24,196,108,.12);}
+    .spacer{flex:1}
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.08);
+      padding:8px 10px; border-radius:999px;
+      color:var(--muted); font-size:13px;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:12px;
+      margin-top:14px;
+    }
+    @media(min-width:900px){
+      .grid{grid-template-columns: 280px 1fr;}
+    }
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .card h2{margin:0; padding:14px 14px 8px; font-size:16px}
+    .card .content{padding:0 14px 14px}
+    .muted{color:var(--muted)}
+    .nav{
+      display:flex; flex-direction:column; gap:8px;
+      padding:14px;
+    }
+    .nav button{
+      width:100%;
+      text-align:left;
+      display:flex; align-items:center; justify-content:space-between;
+      gap:10px;
+      border-radius:14px;
+      padding:12px 12px;
+      border:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.03);
+      color:var(--text);
+      cursor:pointer;
+    }
+    .nav button[aria-current="page"]{
+      border-color: rgba(24,196,108,.45);
+      background:rgba(24,196,108,.10);
+    }
+    .tag{
+      font-size:12px; color:var(--muted);
+      border:1px solid rgba(255,255,255,.10);
+      padding:4px 8px; border-radius:999px;
+      background:rgba(255,255,255,.03);
+      white-space:nowrap;
+    }
+    .main-head{
+      padding:14px;
+      border-bottom:1px solid rgba(255,255,255,.06);
+      display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+    }
+    .main-head h1{margin:0; font-size:18px}
+    .main-head .sub{margin-top:4px; color:var(--muted); font-size:13px}
+    .actions{display:flex; gap:8px; flex-wrap:wrap}
+    .btn{
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      color:var(--text);
+      padding:10px 12px;
+      border-radius:14px;
+      cursor:pointer;
+    }
+    .btn.primary{
+      border-color: rgba(24,196,108,.50);
+      background: linear-gradient(180deg, rgba(24,196,108,.22), rgba(24,196,108,.10));
+    }
+    .btn.danger{
+      border-color: rgba(255,92,92,.55);
+      background: rgba(255,92,92,.10);
+    }
+    .view{padding:14px}
+    .notice{
+      border:1px dashed rgba(255,255,255,.16);
+      background: rgba(255,255,255,.03);
+      border-radius:14px;
+      padding:12px;
+      color:var(--muted);
+      line-height:1.35;
+    }
+
+    /* mobil-bunnbar (for senere) */
+    .bottombar{
+      position:fixed; left:0; right:0; bottom:0;
+      background:rgba(11,15,20,.86);
+      border-top:1px solid rgba(255,255,255,.06);
+      backdrop-filter: blur(10px);
+      padding:10px 12px;
+      display:flex; gap:8px; justify-content:center;
+    }
+    .bottombar .btn{min-width:110px}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="dot"></span>
+        <span>Farmapp</span>
+      </div>
+      <div class="spacer"></div>
+      <div class="pill" id="pillStatus">Laster…</div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+      <!-- Side-meny -->
+      <aside class="card">
+        <h2>Meny</h2>
+        <div class="nav" id="nav"></div>
+        <div class="content muted" style="padding-top:0">
+          <div style="font-size:12px; line-height:1.35;">
+            Tips: Vi bygger nå modulbasert. Da slipper du “krasj” og gigantfiler.
+          </div>
+        </div>
+      </aside>
+
+      <!-- Hovedinnhold -->
+      <main class="card">
+        <div class="main-head">
+          <div>
+            <h1 id="viewTitle">Starter…</h1>
+            <div class="sub" id="viewSub">Klargjør moduler</div>
+          </div>
+          <div class="actions" id="actions"></div>
+        </div>
+        <div class="view" id="view">
+          <div class="notice">
+            Hvis du ser dette lenge: modulene mangler i repoet ennå. Vi legger dem inn én og én fil.
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div class="bottombar" id="bottombar" style="display:none">
+    <!-- Kan aktiveres senere -->
+  </div>
+
+  <!-- Modul-loader: vi legger inn disse filene etter hvert -->
+  <script type="module">
+    // Minimal boot – viser tydelig hva som mangler, så du slipper “blank side”.
+    const pill = document.getElementById('pillStatus');
+    const view = document.getElementById('view');
+    const title = document.getElementById('viewTitle');
+    const sub = document.getElementById('viewSub');
+
+    const need = [
+      './modules/app.js'
+    ];
+
+    async function tryLoad(){
+      try{
+        pill.textContent = 'Laster app…';
+        const mod = await import(need[0]);
+        if(!mod || !mod.boot) throw new Error('app.js mangler boot()');
+        await mod.boot();
+        pill.textContent = 'Klar';
+      }catch(err){
+        console.error(err);
+        pill.textContent = 'Mangler filer';
+        title.textContent = 'Moduler mangler';
+        sub.textContent = 'Legg inn neste fil i repoet';
+        view.innerHTML = `
+          <div class="notice">
+            <div style="font-weight:700; color:#e8f0f7; margin-bottom:6px;">Neste steg</div>
+            <div>Legg inn: <code style="color:#e8f0f7;">/modules/app.js</code></div>
+            <div style="margin-top:10px;">Når den finnes, forsvinner denne meldingen automatisk.</div>
+          </div>
+        `;
+      }
+    }
+    tryLoad();
+  </script>
+</body>
+</html>
