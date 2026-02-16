@@ -1,13 +1,7 @@
 // modules/app.js
-// Farmapp core
-// Fix: router bygde menyen automatisk -> alt ble listet.
-// Løsning: Vi tar full kontroll på nav og håndhever den (MutationObserver).
-// Krav fra deg:
-// - "Min gård" skal UT av hovedmenyen
-// - "Innstillinger" samler gårdsinfo, skifter, produksjoner og andre innstillinger
-// - Produksjoner (Husdyr / Grovfôr / Frukt og grønt) med avhuking
-// - Meny skal bare vise relevant/aktivt (gjem resten)
-// - Sau er paraply under Husdyr
+// Stabil meny + Innstillinger + Produksjoner (avhuking) + filtrert hovedmeny
+// Viktig: INGEN MutationObserver (den kunne låse appen).
+// Meny håndheves via: init + hashchange + setData()
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
 import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml, el } from "./ui.js";
@@ -30,9 +24,11 @@ export async function boot() {
     return;
   }
 
-  pill.textContent = "Laster data…";
+  pill.textContent = "Laster…";
 
-  // ---- Data ----
+  // --------------------
+  // Data
+  // --------------------
   let data = ensureDataShape(loadData());
 
   function clone(obj) {
@@ -45,61 +41,69 @@ export async function boot() {
     return ok;
   }
 
-  // ---- Router ----
+  // --------------------
+  // Router
+  // --------------------
   const router = createRouter({ navEl, titleEl, subEl, actionsEl, viewEl });
 
   function ctx() {
-    return { data, setData, rerender: () => router.rerender(), toast };
+    return {
+      data,
+      setData,
+      rerender: () => router.rerender(),
+      toast
+    };
   }
 
   function setData(next) {
     data = ensureDataShape(next);
     persist();
     router.setCtx(ctx());
-    enforceNavNow(); // viktig: meny må alltid reflektere produksjoner
+    enforceNav(); // viktig: oppdater meny
     router.rerender();
   }
 
   router.setCtx(ctx());
 
-  // =========================
+  // --------------------
   // Utils
-  // =========================
-  function pad2(n) {
-    return String(n).padStart(2, "0");
-  }
-  function nowStamp() {
-    const d = new Date();
-    return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  }
+  // --------------------
+  function pad2(n) { return String(n).padStart(2, "0"); }
+
   function todayISO() {
     const d = new Date();
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   }
+
   function fmtDate(iso) {
     const s = String(iso || "").trim();
     const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return s;
     return `${m[3]}.${m[2]}.${m[1]}`;
   }
+
   function toNumber(v) {
     const s = String(v ?? "").trim().replace(",", ".");
     const n = Number(s);
     return Number.isFinite(n) ? n : NaN;
   }
+
   function round1(n) {
     const x = Number(n || 0);
     return Math.round(x * 10) / 10;
   }
+
   function newId(prefix) {
     return `${prefix}_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
   }
+
   function typeLabel(t) {
     if (t === "fulldyrket") return "Fulldyrket";
     if (t === "overflatedyrket") return "Overflatedyrket";
     if (t === "innmarksbeite") return "Innmarksbeite";
     return "Ukjent";
   }
+
   function sumSkifter(skifter) {
     const out = { total: 0, fulldyrket: 0, overflatedyrket: 0, innmarksbeite: 0 };
     for (const s of skifter || []) {
@@ -111,6 +115,7 @@ export async function boot() {
     }
     return out;
   }
+
   function skifteOptions(d) {
     const skifter = Array.isArray(d?.skifter) ? d.skifter : [];
     return skifter
@@ -121,278 +126,80 @@ export async function boot() {
         label: `${s.navn || "Skifte"} (${typeLabel(s.type)}, ${round1(s.areal)} daa)`
       }));
   }
+
   function skifteNameById(d, id) {
     const s = (d?.skifter || []).find((x) => x.id === id);
     return s ? (s.navn || "Skifte") : "Ukjent skifte";
   }
-  function isISODate(s) {
-    return /^\d{4}-\d{2}-\d{2}$/.test(String(s || "").trim());
+
+  // --------------------
+  // Meny (STABIL)
+  // --------------------
+  function navDivider(label) {
+    const d = document.createElement("div");
+    d.textContent = label;
+    d.style.margin = "14px 0 6px 0";
+    d.style.fontWeight = "900";
+    d.style.fontSize = "12px";
+    d.style.color = "rgba(233,255,245,.85)";
+    return d;
   }
-  function inPeriod(dateISO, fromISO, toISO) {
-    const d = String(dateISO || "").trim();
-    if (!isISODate(d)) return true;
-    if (fromISO && isISODate(fromISO) && d < fromISO) return false;
-    if (toISO && isISODate(toISO) && d > toISO) return false;
-    return true;
+
+  function navBtn(label, route, indent = 0) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn";
+    b.textContent = label;
+    b.style.width = "100%";
+    b.style.justifyContent = "flex-start";
+    if (indent) b.style.paddingLeft = `${12 + indent}px`;
+    b.addEventListener("click", () => { window.location.hash = route; });
+    return b;
   }
 
-  async function askPeriodDialog(title) {
-    const from = await promptDialog({
-      title,
-      subtitle: "Periodefilter (valgfritt)",
-      label: "Fra (YYYY-MM-DD) – tomt = alt",
-      value: "",
-      placeholder: "2026-01-01",
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (from === null) return null;
+  function enforceNav() {
+    // Vi tar kontroll på nav hver gang – men uten observer/loop.
+    navEl.innerHTML = "";
 
-    const to = await promptDialog({
-      title,
-      subtitle: "Periodefilter (valgfritt)",
-      label: "Til (YYYY-MM-DD) – tomt = alt",
-      value: "",
-      placeholder: "2026-12-31",
-      okText: "OK",
-      cancelText: "Avbryt"
-    });
-    if (to === null) return null;
+    // Alltid synlig
+    navEl.appendChild(navBtn("Oversikt", "dashboard"));
+    navEl.appendChild(navBtn("Sprøyting", "spraying"));
+    navEl.appendChild(navBtn("Gjødsel", "fertilizer"));
 
-    const f = String(from || "").trim();
-    const t = String(to || "").trim();
+    navEl.appendChild(navDivider("Innstillinger"));
+    navEl.appendChild(navBtn("Innstillinger", "settings"));
 
-    if (f && !isISODate(f)) {
-      toast("Fra-dato må være YYYY-MM-DD eller tom.");
-      return null;
+    // Filtrert etter produksjoner
+    const p = data.productions;
+
+    if (p.husdyr.enabled) {
+      navEl.appendChild(navDivider("Husdyr"));
+      navEl.appendChild(navBtn("Husdyr", "husdyr"));
+      if (p.husdyr.sau) navEl.appendChild(navBtn("Sau", "sau", 10));
+      if (p.husdyr.geit) navEl.appendChild(navBtn("Geit", "geit", 10));
     }
-    if (t && !isISODate(t)) {
-      toast("Til-dato må være YYYY-MM-DD eller tom.");
-      return null;
-    }
-    if (f && t && f > t) {
-      toast("Fra kan ikke være etter Til.");
-      return null;
-    }
-    return { from: f || "", to: t || "" };
-  }
 
-  function periodLabel(fromISO, toISO) {
-    if (fromISO && toISO) return `Periode: ${fmtDate(fromISO)} – ${fmtDate(toISO)}`;
-    if (fromISO) return `Fra: ${fmtDate(fromISO)}`;
-    if (toISO) return `Til: ${fmtDate(toISO)}`;
-    return "Periode: Alle registreringer";
-  }
+    if (p.grovfor.enabled) {
+      navEl.appendChild(navDivider("Grovfôr"));
+      navEl.appendChild(navBtn("Grovfôr", "grovfor"));
+    }
 
-  async function openPrintPDF({ title, fileName, html }) {
-    try {
-      const pdf = await import("./pdf.js");
-      pdf.openPrintReport({ title, fileName, html });
-    } catch (e) {
-      console.error(e);
-      toast("PDF-modul mangler eller popups er blokkert. Sjekk modules/pdf.js og popup-innstillinger.");
+    if (p.fruktGront.enabled) {
+      navEl.appendChild(navDivider("Frukt og grønt"));
+      navEl.appendChild(navBtn("Frukt og grønt", "fruktgront"));
+      if (p.fruktGront.rabarbra) navEl.appendChild(navBtn("Rabarbra", "rabarbra", 10));
     }
   }
 
-  // =========================
-  // Proff PDF: sider + sidetall
-  // =========================
-  function chunk(arr, size) {
-    const out = [];
-    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-    return out;
-  }
+  // Kjør enforceNav ved sidebytte (router kan bygge ting, vi overskriver etterpå)
+  window.addEventListener("hashchange", () => {
+    // lite delay så vi vinner etter router
+    setTimeout(enforceNav, 0);
+  });
 
-  function buildPagedReportHTML({ title, farm, metaLines = [], columns = [], rows = [], rowsPerPage = 20 }) {
-    const pages = chunk(rows, rowsPerPage);
-    const totalPages = Math.max(1, pages.length);
-    const generated = nowStamp();
-
-    const css = `
-      <style>
-        @media print {
-          html, body { margin:0; padding:0; }
-          .page { page-break-after: always; }
-          .page:last-child { page-break-after: auto; }
-        }
-        body{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; color:#111; background:#fff; }
-        .page{ width:210mm; min-height:297mm; box-sizing:border-box; padding:14mm 12mm; }
-        .hdr{ display:flex; justify-content:space-between; gap:10mm; border-bottom:1px solid rgba(0,0,0,.12); padding-bottom:6mm; margin-bottom:6mm; }
-        .hdr h1{ font-size:16pt; margin:0 0 1mm 0; font-weight:900; line-height:1.1; }
-        .hdr .sub{ font-size:10pt; color:#333; line-height:1.35; }
-        .meta{ margin-top:2mm; font-size:9pt; color:#444; line-height:1.35; }
-        table{ width:100%; border-collapse:collapse; font-size:10pt; }
-        thead th{ text-align:left; border-bottom:1px solid rgba(0,0,0,.20); padding:2.2mm 2mm; font-weight:800; color:#111; }
-        tbody td{ border-bottom:1px solid rgba(0,0,0,.10); padding:2mm 2mm; vertical-align:top; }
-        .num{ text-align:right; white-space:nowrap; }
-        .ftr{ margin-top:8mm; border-top:1px solid rgba(0,0,0,.12); padding-top:3mm; font-size:9pt; color:#333; display:flex; justify-content:space-between; gap:10mm; }
-        .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
-        .muted{ color:#555; }
-      </style>
-    `;
-
-    const metaHTML = metaLines.length ? `<div class="meta">${metaLines.map((x) => escapeHtml(x)).join(" • ")}</div>` : "";
-
-    const pagesHTML = pages.length
-      ? pages
-          .map((pageRows, idx) => {
-            const pageNo = idx + 1;
-
-            const thead = `
-              <thead><tr>
-                ${columns
-                  .map(
-                    (c) =>
-                      `<th style="${c.width ? `width:${c.width};` : ""}${c.align === "right" ? "text-align:right;" : ""}">${escapeHtml(c.label)}</th>`
-                  )
-                  .join("")}
-              </tr></thead>
-            `;
-
-            const tbody = `
-              <tbody>
-                ${pageRows
-                  .map(
-                    (r) => `
-                      <tr>
-                        ${columns
-                          .map((c) => {
-                            const v = r[c.key];
-                            const txt = v == null ? "" : String(v);
-                            const cls = c.align === "right" ? "num" : "";
-                            return `<td class="${cls}">${escapeHtml(txt)}</td>`;
-                          })
-                          .join("")}
-                      </tr>
-                    `
-                  )
-                  .join("")}
-              </tbody>
-            `;
-
-            return `
-              <div class="page">
-                <div class="hdr">
-                  <div>
-                    <h1>${escapeHtml(title)}</h1>
-                    <div class="sub"><b>${escapeHtml(farm?.name || "Gård")}</b>${farm?.kommune ? ` • ${escapeHtml(farm.kommune)}` : ""}</div>
-                    ${metaHTML}
-                  </div>
-                  <div class="sub" style="text-align:right; white-space:nowrap;">
-                    <div><b>Generert:</b> ${escapeHtml(generated)}</div>
-                    <div><b>Antall:</b> ${rows.length}</div>
-                  </div>
-                </div>
-
-                <table>${thead}${tbody}</table>
-
-                <div class="ftr">
-                  <div class="muted">Farmapp</div>
-                  <div class="mono muted">Side ${pageNo} av ${totalPages}</div>
-                </div>
-              </div>
-            `;
-          })
-          .join("")
-      : `
-        <div class="page">
-          <div class="hdr">
-            <div>
-              <h1>${escapeHtml(title)}</h1>
-              <div class="sub"><b>${escapeHtml(farm?.name || "Gård")}</b>${farm?.kommune ? ` • ${escapeHtml(farm.kommune)}` : ""}</div>
-              ${metaHTML}
-            </div>
-            <div class="sub" style="text-align:right; white-space:nowrap;">
-              <div><b>Generert:</b> ${escapeHtml(generated)}</div>
-              <div><b>Antall:</b> 0</div>
-            </div>
-          </div>
-          <div class="muted">Ingen registreringer i valgt periode.</div>
-          <div class="ftr">
-            <div class="muted">Farmapp</div>
-            <div class="mono muted">Side 1 av 1</div>
-          </div>
-        </div>
-      `;
-
-    return `${css}${pagesHTML}`;
-  }
-
-  async function exportSprøytePDF(d) {
-    const period = await askPeriodDialog("Sprøytejournal (PDF)");
-    if (!period) return;
-
-    const filtered = (d.plantProtectionLog || [])
-      .filter((r) => inPeriod(r.date, period.from, period.to))
-      .slice()
-      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
-      .map((r) => ({
-        date: fmtDate(r.date),
-        skifte: skifteNameById(d, r.skifteId),
-        middel: r.product || "",
-        dose: `${r.dose ?? ""} ${r.unit || ""}`.trim(),
-        formål: r.purpose || "",
-        notat: r.note || ""
-      }));
-
-    const html = buildPagedReportHTML({
-      title: "Sprøytejournal",
-      farm: d.farm || {},
-      metaLines: [periodLabel(period.from, period.to), "Plantevernjournal"],
-      columns: [
-        { key: "date", label: "Dato", width: "14%" },
-        { key: "skifte", label: "Skifte", width: "22%" },
-        { key: "middel", label: "Middel", width: "22%" },
-        { key: "dose", label: "Dose", width: "14%" },
-        { key: "formål", label: "Formål", width: "14%" },
-        { key: "notat", label: "Notat", width: "14%" }
-      ],
-      rows: filtered,
-      rowsPerPage: 20
-    });
-
-    openPrintPDF({ title: "Sprøytejournal", fileName: "sproytejournal", html });
-  }
-
-  async function exportGjødselPDF(d) {
-    const period = await askPeriodDialog("Gjødseljournal (PDF)");
-    if (!period) return;
-
-    const filtered = (d.fertilizerLog || [])
-      .filter((r) => inPeriod(r.date, period.from, period.to))
-      .slice()
-      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
-      .map((r) => ({
-        date: fmtDate(r.date),
-        skifte: skifteNameById(d, r.skifteId),
-        type: r.type || "",
-        produkt: r.product || "",
-        mengde: `${r.amount ?? ""} ${r.unit || ""}`.trim(),
-        notat: r.note || ""
-      }));
-
-    const html = buildPagedReportHTML({
-      title: "Gjødseljournal",
-      farm: d.farm || {},
-      metaLines: [periodLabel(period.from, period.to), "Gjødslingsjournal"],
-      columns: [
-        { key: "date", label: "Dato", width: "14%" },
-        { key: "skifte", label: "Skifte", width: "22%" },
-        { key: "type", label: "Type", width: "16%" },
-        { key: "produkt", label: "Produkt", width: "22%" },
-        { key: "mengde", label: "Mengde", width: "14%" },
-        { key: "notat", label: "Notat", width: "12%" }
-      ],
-      rows: filtered,
-      rowsPerPage: 20
-    });
-
-    openPrintPDF({ title: "Gjødseljournal", fileName: "gjodseljournal", html });
-  }
-
-  // =========================
-  // Skifter / husdyr grunnmur
-  // =========================
+  // --------------------
+  // Dialoger
+  // --------------------
   async function askSkifteFields(initial = {}) {
     const navn = await promptDialog({
       title: "Skifte",
@@ -437,10 +244,15 @@ export async function boot() {
     });
     if (type === null) return null;
 
-    return { id: initial.id || newId("s"), navn: String(navn).trim(), areal, type };
+    return {
+      id: initial.id || newId("s"),
+      navn: String(navn).trim(),
+      areal,
+      type
+    };
   }
 
-  async function askSprøytingEntry(d, initial = {}) {
+  async function askSprayingEntry(d, initial = {}) {
     const skOpts = skifteOptions(d);
     if (!skOpts.length) { toast("Du må legge inn minst ett skifte først (Innstillinger → Skifter)."); return null; }
 
@@ -479,8 +291,8 @@ export async function boot() {
 
     const doseTxt = await promptDialog({
       title: "Sprøyting",
-      subtitle: "Dose (tall)",
-      label: "Dose",
+      subtitle: "Dose",
+      label: "Dose (tall)",
       value: initial.dose != null ? String(initial.dose) : "",
       placeholder: "F.eks. 0,5",
       okText: "Neste",
@@ -493,42 +305,19 @@ export async function boot() {
 
     const unit = await selectDialog({
       title: "Sprøyting",
-      subtitle: "Enhet for dose",
+      subtitle: "Enhet",
       label: "Enhet",
       value: initial.unit || "l/daa",
       options: [
         { value: "l/daa", label: "l/daa" },
         { value: "ml/daa", label: "ml/daa" },
         { value: "g/daa", label: "g/daa" },
-        { value: "kg/daa", label: "kg/daa" },
-        { value: "annet", label: "Annet" }
+        { value: "kg/daa", label: "kg/daa" }
       ],
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (unit === null) return null;
-
-    const formål = await promptDialog({
-      title: "Sprøyting",
-      subtitle: "Formål / målorganisme (valgfritt)",
-      label: "Formål",
-      value: initial.purpose || "",
-      placeholder: "F.eks. ugras / sopp",
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (formål === null) return null;
-
-    const notat = await promptDialog({
-      title: "Sprøyting",
-      subtitle: "Notat (valgfritt)",
-      label: "Notat",
-      value: initial.note || "",
-      placeholder: "",
       okText: "Lagre",
       cancelText: "Avbryt"
     });
-    if (notat === null) return null;
+    if (unit === null) return null;
 
     return {
       id: initial.id || newId("pp"),
@@ -536,13 +325,11 @@ export async function boot() {
       skifteId,
       product: String(middel).trim(),
       dose,
-      unit,
-      purpose: String(formål || "").trim(),
-      note: String(notat || "").trim()
+      unit
     };
   }
 
-  async function askGjødselEntry(d, initial = {}) {
+  async function askFertilizerEntry(d, initial = {}) {
     const skOpts = skifteOptions(d);
     if (!skOpts.length) { toast("Du må legge inn minst ett skifte først (Innstillinger → Skifter)."); return null; }
 
@@ -568,28 +355,12 @@ export async function boot() {
     });
     if (skifteId === null) return null;
 
-    const type = await selectDialog({
-      title: "Gjødsel",
-      subtitle: "Type",
-      label: "Type",
-      value: initial.type || "Mineralgjødsel",
-      options: [
-        { value: "Mineralgjødsel", label: "Mineralgjødsel" },
-        { value: "Husdyrgjødsel", label: "Husdyrgjødsel" },
-        { value: "Kalk", label: "Kalk" },
-        { value: "Annet", label: "Annet" }
-      ],
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (type === null) return null;
-
     const produkt = await promptDialog({
       title: "Gjødsel",
-      subtitle: "Produkt / blanding",
-      label: "Produkt",
+      subtitle: "Produkt",
+      label: "Produkt / type",
       value: initial.product || "",
-      placeholder: "F.eks. 22-3-10 / kugjødsel",
+      placeholder: "F.eks. 22-3-10",
       okText: "Neste",
       cancelText: "Avbryt"
     });
@@ -597,11 +368,11 @@ export async function boot() {
 
     const mengdeTxt = await promptDialog({
       title: "Gjødsel",
-      subtitle: "Mengde (tall)",
-      label: "Mengde",
+      subtitle: "Mengde",
+      label: "Mengde (tall)",
       value: initial.amount != null ? String(initial.amount) : "",
       placeholder: "F.eks. 25",
-      okText: "Neste",
+      okText: "Lagre",
       cancelText: "Avbryt"
     });
     if (mengdeTxt === null) return null;
@@ -609,249 +380,57 @@ export async function boot() {
     const amount = toNumber(mengdeTxt);
     if (!Number.isFinite(amount) || amount < 0) { toast("Ugyldig mengde."); return null; }
 
-    const unit = await selectDialog({
-      title: "Gjødsel",
-      subtitle: "Enhet",
-      label: "Enhet",
-      value: initial.unit || "kg/daa",
-      options: [
-        { value: "kg/daa", label: "kg/daa" },
-        { value: "l/daa", label: "l/daa" },
-        { value: "tonn/ha", label: "tonn/ha" },
-        { value: "kg", label: "kg (totalt)" },
-        { value: "l", label: "l (totalt)" }
-      ],
-      okText: "Neste",
-      cancelText: "Avbryt"
-    });
-    if (unit === null) return null;
-
-    const notat = await promptDialog({
-      title: "Gjødsel",
-      subtitle: "Notat (valgfritt)",
-      label: "Notat",
-      value: initial.note || "",
-      placeholder: "",
-      okText: "Lagre",
-      cancelText: "Avbryt"
-    });
-    if (notat === null) return null;
-
     return {
       id: initial.id || newId("f"),
       date: String(dato).trim(),
       skifteId,
-      type: String(type),
       product: String(produkt).trim(),
-      amount,
-      unit,
-      note: String(notat || "").trim()
+      amount
     };
   }
 
-  // =========================
-  // NAV: ta kontroll + håndhev
-  // =========================
-  function navDivider(label) {
-    const d = document.createElement("div");
-    d.textContent = label;
-    d.style.margin = "14px 0 6px 0";
-    d.style.fontWeight = "900";
-    d.style.fontSize = "12px";
-    d.style.color = "rgba(233,255,245,.85)";
-    return d;
-  }
-
-  function navBtn(label, route, indent = 0) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "btn";
-    b.textContent = label;
-    b.style.width = "100%";
-    b.style.justifyContent = "flex-start";
-    if (indent) b.style.paddingLeft = `${12 + indent}px`;
-    b.addEventListener("click", () => { window.location.hash = route; });
-    return b;
-  }
-
-  let _navLock = false;
-  function enforceNavNow() {
-    if (_navLock) return;
-    _navLock = true;
-    try {
-      navEl.innerHTML = "";
-
-      // Alltid synlig
-      navEl.appendChild(navBtn("Oversikt", "dashboard"));
-      navEl.appendChild(navBtn("Sprøyting", "sprøyting"));
-      navEl.appendChild(navBtn("Gjødsel", "gjodsel"));
-      navEl.appendChild(navDivider("Innstillinger"));
-      navEl.appendChild(navBtn("Innstillinger", "settings"));
-
-      // Produksjonsstyrt
-      const p = data.productions;
-
-      if (p.husdyr.enabled) {
-        navEl.appendChild(navDivider("Husdyr"));
-        navEl.appendChild(navBtn("Husdyr", "husdyrHub"));
-        if (p.husdyr.sau) navEl.appendChild(navBtn("Sau", "sau", 10));
-        if (p.husdyr.geit) navEl.appendChild(navBtn("Geit", "geit", 10));
-        if (p.husdyr.storfe) navEl.appendChild(navBtn("Storfe", "storfe", 10));
-        if (p.husdyr.gris) navEl.appendChild(navBtn("Gris", "gris", 10));
-        if (p.husdyr.fjorfe) navEl.appendChild(navBtn("Fjørfe", "fjorfe", 10));
-        if (p.husdyr.hest) navEl.appendChild(navBtn("Hest", "hest", 10));
-      }
-
-      if (p.grovfor.enabled) {
-        navEl.appendChild(navDivider("Grovfôr"));
-        navEl.appendChild(navBtn("Grovfôr", "grovforHub"));
-        if (p.grovfor.eng) navEl.appendChild(navBtn("Eng og slått", "grovforEng", 10));
-        if (p.grovfor.beite) navEl.appendChild(navBtn("Beite", "grovforBeite", 10));
-        if (p.grovfor.forplan) navEl.appendChild(navBtn("Fôrplan", "grovforForplan", 10));
-        if (p.grovfor.lager) navEl.appendChild(navBtn("Grovfôrlager", "grovforLager", 10));
-      }
-
-      if (p.fruktGront.enabled) {
-        navEl.appendChild(navDivider("Frukt og grønt"));
-        navEl.appendChild(navBtn("Frukt og grønt", "fgHub"));
-        if (p.fruktGront.rabarbra) navEl.appendChild(navBtn("Rabarbra", "rabarbra", 10));
-        if (p.fruktGront.potet) navEl.appendChild(navBtn("Potet", "potet", 10));
-        if (p.fruktGront.fruktBaer) navEl.appendChild(navBtn("Frukt og bær", "fruktBaer", 10));
-        if (p.fruktGront.rot) navEl.appendChild(navBtn("Rotgrønnsaker", "rotgront", 10));
-        if (p.fruktGront.kal) navEl.appendChild(navBtn("Kålvekster", "kalvekster", 10));
-        if (p.fruktGront.bladLok) navEl.appendChild(navBtn("Løk/bladgrønt", "bladlok", 10));
-      }
-    } finally {
-      _navLock = false;
-    }
-  }
-
-  // Håndhev meny (hvis router prøver å bygge den på nytt)
-  const navObserver = new MutationObserver(() => {
-    if (_navLock) return;
-    // Hvis router har lagt inn andre ting, så overskriver vi.
-    enforceNavNow();
-  });
-  navObserver.observe(navEl, { childList: true, subtree: true });
-
-  // =========================
+  // --------------------
   // Views
-  // =========================
+  // --------------------
   router.registerView("dashboard", {
     title: "Oversikt",
-    subtitle: (d) => (d?.farm?.name ? `Gård: ${d.farm.name}` : "Sett opp gårdsnavn i Innstillinger"),
-    actions: () => [
-      {
-        label: "Eksporter data",
-        onClick: async () => {
-          const txt = exportData();
-          await showCodeDialog({
-            title: "Eksport (JSON)",
-            subtitle: "Kopier og lagre denne teksten. Du kan importere den tilbake senere.",
-            code: txt,
-            copyText: "Kopier",
-            okText: "Lukk"
-          });
-        }
-      },
-      {
-        label: "Importer data",
-        onClick: async ({ setData }) => {
-          const json = await promptDialog({
-            title: "Importer (JSON)",
-            subtitle: "Lim inn eksportert JSON her.",
-            label: "JSON",
-            value: "",
-            placeholder: "{ ... }",
-            okText: "Importer",
-            cancelText: "Avbryt"
-          });
-          if (json === null) return;
-
-          const ok = importData(json);
-          if (!ok) return toast("Import feilet. Sjekk at teksten er gyldig JSON.");
-
-          setData(loadData());
-          toast("Import ok.");
-        }
-      },
-      {
-        label: "Nullstill alt",
-        danger: true,
-        onClick: async ({ setData }) => {
-          const ok = await confirmDialog({
-            title: "Nullstill alt?",
-            subtitle: "Dette sletter ALT lagret innhold på denne enheten.",
-            okText: "Slett alt",
-            cancelText: "Avbryt",
-            danger: true
-          });
-          if (!ok) return;
-
-          setData(resetData());
-          toast("Nullstilt.");
-        }
-      }
-    ],
+    subtitle: (d) => (d?.farm?.name ? `Gård: ${d.farm.name}` : "Sett gårdsnavn i Innstillinger"),
+    actions: () => [],
     render(container, { data: d }) {
       const farm = d.farm || {};
       const s = sumSkifter(d.skifter);
 
       container.innerHTML = `
         <div class="notice">
-          <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">Status</div>
           <div><b>Gård:</b> ${escapeHtml(farm.name || "Ikke satt")}</div>
           <div><b>Kommune:</b> ${escapeHtml(farm.kommune || "Ikke satt")}</div>
           <div><b>Areal (dekar):</b> ${Number(farm.areal || 0)}</div>
-
-          <div style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.10);">
-            <div style="font-weight:900; margin-bottom:6px; color:#e8f0f7;">Skifter</div>
-            <div><b>Antall:</b> ${(d.skifter || []).length}</div>
-            <div><b>Totalt (dekar):</b> ${round1(s.total)}</div>
-          </div>
-
+          <div style="margin-top:10px;"><b>Skifter:</b> ${(d.skifter || []).length} • Totalt ${round1(s.total)} daa</div>
           <div style="margin-top:12px;">
-            <button id="go_settings" class="btn" style="width:100%; justify-content:center;">Åpne Innstillinger</button>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08);">
-            <div style="font-weight:900;">Rapporter (proff PDF)</div>
-            <div class="muted" style="font-size:12px; margin-top:6px;">
-              Velg periode → åpner utskrift → <b>Skriv ut</b> → <b>Lagre som PDF</b>.
-            </div>
-          </div>
-          <div style="padding:14px; display:grid; gap:10px;">
-            <button id="pdf_sproyte" class="btn primary" style="width:100%; justify-content:center;">Sprøytejournal (PDF)</button>
-            <button id="pdf_gjodsel" class="btn primary" style="width:100%; justify-content:center;">Gjødseljournal (PDF)</button>
+            <button id="go_settings" class="btn primary" style="width:100%; justify-content:center;">Åpne Innstillinger</button>
           </div>
         </div>
       `;
-
-      document.getElementById("pdf_sproyte")?.addEventListener("click", () => exportSprøytePDF(d));
-      document.getElementById("pdf_gjodsel")?.addEventListener("click", () => exportGjødselPDF(d));
       document.getElementById("go_settings")?.addEventListener("click", () => { window.location.hash = "settings"; });
     }
   });
 
-  router.registerView("sprøyting", {
+  router.registerView("spraying", {
     title: "Sprøyting",
-    subtitle: "Sprøytejournal / plantevernjournal",
+    subtitle: "Sprøytejournal",
     actions: () => [
       {
         label: "Ny sprøyting",
         primary: true,
         onClick: async ({ data: d, setData }) => {
-          const entry = await askSprøytingEntry(d, {});
-          if (!entry) return;
+          const e = await askSprayingEntry(d, {});
+          if (!e) return;
           const next = clone(d);
-          next.plantProtectionLog.push(entry);
+          next.plantProtectionLog.push(e);
           setData(next);
-          toast("Lagret i sprøytejournal.");
+          toast("Lagret.");
         }
-      },
-      { label: "Eksporter PDF", onClick: async ({ data: d }) => exportSprøytePDF(d) }
+      }
     ],
     render(container, { data: d, setData }) {
       const rows = (d.plantProtectionLog || [])
@@ -860,46 +439,32 @@ export async function boot() {
 
       container.innerHTML = `
         <div class="card">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-            <div>
-              <div style="font-weight:900;">Sprøytejournal</div>
-              <div class="muted" style="font-size:12px; margin-top:4px;">Registrer dato, skifte, middel, dose.</div>
-            </div>
-            <button id="pp_add" class="btn primary">Ny</button>
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-weight:900;">Sprøyting</div>
+            <button id="add" class="btn primary">Ny</button>
           </div>
           <div style="padding:14px; display:grid; gap:10px;">
-            <button id="pp_pdf" class="btn" style="justify-content:center;">Eksporter PDF (periodefilter)</button>
-            ${rows.length === 0 ? `<div class="notice">Ingen registreringer ennå.</div>` : `
-              <div style="display:grid; gap:10px;">
-                ${rows.map(r => `
-                  <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
-                    <div style="font-weight:900;">${escapeHtml(fmtDate(r.date))} • ${escapeHtml(skifteNameById(d, r.skifteId))}</div>
-                    <div class="muted" style="font-size:12px; margin-top:4px;">
-                      ${escapeHtml(r.product || "")} • ${escapeHtml(String(r.dose ?? ""))} ${escapeHtml(r.unit || "")}
-                      ${r.purpose ? ` • ${escapeHtml(r.purpose)}` : ""}
-                    </div>
-                    ${r.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(r.note)}</div>` : ""}
-                  </div>
-                `).join("")}
+            ${rows.length ? rows.map(r => `
+              <div class="notice">
+                <div style="font-weight:900;">${escapeHtml(fmtDate(r.date))} • ${escapeHtml(skifteNameById(d, r.skifteId))}</div>
+                <div class="muted" style="font-size:12px; margin-top:4px;">${escapeHtml(r.product || "")} • ${escapeHtml(String(r.dose ?? ""))} ${escapeHtml(r.unit || "")}</div>
               </div>
-            `}
+            `).join("") : `<div class="notice">Ingen registreringer ennå.</div>`}
           </div>
         </div>
       `;
-
-      document.getElementById("pp_add")?.addEventListener("click", async () => {
-        const entry = await askSprøytingEntry(d, {});
-        if (!entry) return;
+      document.getElementById("add")?.addEventListener("click", async () => {
+        const e = await askSprayingEntry(d, {});
+        if (!e) return;
         const next = clone(d);
-        next.plantProtectionLog.push(entry);
+        next.plantProtectionLog.push(e);
         setData(next);
-        toast("Lagret i sprøytejournal.");
+        toast("Lagret.");
       });
-      document.getElementById("pp_pdf")?.addEventListener("click", () => exportSprøytePDF(d));
     }
   });
 
-  router.registerView("gjodsel", {
+  router.registerView("fertilizer", {
     title: "Gjødsel",
     subtitle: "Gjødseljournal",
     actions: () => [
@@ -907,15 +472,14 @@ export async function boot() {
         label: "Ny gjødsling",
         primary: true,
         onClick: async ({ data: d, setData }) => {
-          const entry = await askGjødselEntry(d, {});
-          if (!entry) return;
+          const e = await askFertilizerEntry(d, {});
+          if (!e) return;
           const next = clone(d);
-          next.fertilizerLog.push(entry);
+          next.fertilizerLog.push(e);
           setData(next);
-          toast("Lagret i gjødseljournal.");
+          toast("Lagret.");
         }
-      },
-      { label: "Eksporter PDF", onClick: async ({ data: d }) => exportGjødselPDF(d) }
+      }
     ],
     render(container, { data: d, setData }) {
       const rows = (d.fertilizerLog || [])
@@ -924,70 +488,54 @@ export async function boot() {
 
       container.innerHTML = `
         <div class="card">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-            <div>
-              <div style="font-weight:900;">Gjødseljournal</div>
-              <div class="muted" style="font-size:12px; margin-top:4px;">Registrer dato, skifte, type, mengde.</div>
-            </div>
-            <button id="f_add" class="btn primary">Ny</button>
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-weight:900;">Gjødsel</div>
+            <button id="add" class="btn primary">Ny</button>
           </div>
           <div style="padding:14px; display:grid; gap:10px;">
-            <button id="f_pdf" class="btn" style="justify-content:center;">Eksporter PDF (periodefilter)</button>
-            ${rows.length === 0 ? `<div class="notice">Ingen registreringer ennå.</div>` : `
-              <div style="display:grid; gap:10px;">
-                ${rows.map(r => `
-                  <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
-                    <div style="font-weight:900;">${escapeHtml(fmtDate(r.date))} • ${escapeHtml(skifteNameById(d, r.skifteId))}</div>
-                    <div class="muted" style="font-size:12px; margin-top:4px;">
-                      ${escapeHtml(r.type || "")} • ${escapeHtml(r.product || "")} • ${escapeHtml(String(r.amount ?? ""))} ${escapeHtml(r.unit || "")}
-                    </div>
-                    ${r.note ? `<div class="muted" style="font-size:12px; margin-top:6px;">${escapeHtml(r.note)}</div>` : ""}
-                  </div>
-                `).join("")}
+            ${rows.length ? rows.map(r => `
+              <div class="notice">
+                <div style="font-weight:900;">${escapeHtml(fmtDate(r.date))} • ${escapeHtml(skifteNameById(d, r.skifteId))}</div>
+                <div class="muted" style="font-size:12px; margin-top:4px;">${escapeHtml(r.product || "")} • ${escapeHtml(String(r.amount ?? ""))}</div>
               </div>
-            `}
+            `).join("") : `<div class="notice">Ingen registreringer ennå.</div>`}
           </div>
         </div>
       `;
-
-      document.getElementById("f_add")?.addEventListener("click", async () => {
-        const entry = await askGjødselEntry(d, {});
-        if (!entry) return;
+      document.getElementById("add")?.addEventListener("click", async () => {
+        const e = await askFertilizerEntry(d, {});
+        if (!e) return;
         const next = clone(d);
-        next.fertilizerLog.push(entry);
+        next.fertilizerLog.push(e);
         setData(next);
-        toast("Lagret i gjødseljournal.");
+        toast("Lagret.");
       });
-      document.getElementById("f_pdf")?.addEventListener("click", () => exportGjødselPDF(d));
     }
   });
 
-  // =========================
-  // Innstillinger (ny)
-  // =========================
+  // --------------------
+  // Innstillinger (hoved)
+  // --------------------
   router.registerView("settings", {
     title: "Innstillinger",
-    subtitle: "Sjeldne endringer: gård, skifter, produksjoner, backup",
+    subtitle: "Sjeldne endringer",
     actions: () => [],
-    render(container, { data: d }) {
+    render(container) {
       container.innerHTML = `
         <div class="card">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08);">
-            <div style="font-weight:900;">Innstillinger</div>
-            <div class="muted" style="font-size:12px; margin-top:6px;">Her ligger ting du sjelden endrer.</div>
-          </div>
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Innstillinger</div>
           <div style="padding:14px; display:grid; gap:10px;">
-            <button class="btn primary" id="go_farm" style="justify-content:space-between;"><span><b>Gårdsinfo</b></span><span class="muted" style="font-size:12px;">Åpne</span></button>
-            <button class="btn primary" id="go_skifter" style="justify-content:space-between;"><span><b>Skifter</b></span><span class="muted" style="font-size:12px;">Åpne</span></button>
-            <button class="btn primary" id="go_prod" style="justify-content:space-between;"><span><b>Produksjoner</b></span><span class="muted" style="font-size:12px;">Åpne</span></button>
-            <button class="btn" id="go_backup" style="justify-content:space-between;"><span><b>Backup / Import</b></span><span class="muted" style="font-size:12px;">Åpne</span></button>
+            <button class="btn primary" id="go_farm">Gårdsinfo</button>
+            <button class="btn primary" id="go_fields">Skifter</button>
+            <button class="btn primary" id="go_prod">Produksjoner</button>
+            <button class="btn" id="go_backup">Backup / Import</button>
           </div>
         </div>
       `;
-      document.getElementById("go_farm")?.addEventListener("click", () => { window.location.hash = "settingsFarm"; });
-      document.getElementById("go_skifter")?.addEventListener("click", () => { window.location.hash = "settingsSkifter"; });
-      document.getElementById("go_prod")?.addEventListener("click", () => { window.location.hash = "settingsProduksjoner"; });
-      document.getElementById("go_backup")?.addEventListener("click", () => { window.location.hash = "settingsBackup"; });
+      document.getElementById("go_farm")?.addEventListener("click", () => (window.location.hash = "settingsFarm"));
+      document.getElementById("go_fields")?.addEventListener("click", () => (window.location.hash = "settingsFields"));
+      document.getElementById("go_prod")?.addEventListener("click", () => (window.location.hash = "settingsProductions"));
+      document.getElementById("go_backup")?.addEventListener("click", () => (window.location.hash = "settingsBackup"));
     }
   });
 
@@ -998,35 +546,30 @@ export async function boot() {
     render(container, { data: d, setData }) {
       const farm = d.farm || {};
       container.innerHTML = `
-        <div class="notice">Dette endres sjelden.</div>
-
-        <div class="card" style="margin-top:12px;">
+        <div class="card">
           <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Gårdsinfo</div>
           <div style="padding:14px; display:grid; gap:10px;">
             <div>
-              <div class="muted" style="font-size:13px; margin-bottom:6px;">Gårdsnavn</div>
-              <input id="farm_name" class="ui-input-fallback" value="${escapeHtml(farm.name || "")}" placeholder="F.eks. Drengen gård" />
+              <div class="muted" style="font-size:12px; margin-bottom:6px;">Gårdsnavn</div>
+              <input id="name" class="ui-input-fallback" value="${escapeHtml(farm.name || "")}" />
             </div>
             <div>
-              <div class="muted" style="font-size:13px; margin-bottom:6px;">Kommune</div>
-              <input id="farm_kommune" class="ui-input-fallback" value="${escapeHtml(farm.kommune || "")}" placeholder="F.eks. Karmøy" />
+              <div class="muted" style="font-size:12px; margin-bottom:6px;">Kommune</div>
+              <input id="kommune" class="ui-input-fallback" value="${escapeHtml(farm.kommune || "")}" />
             </div>
             <div>
-              <div class="muted" style="font-size:13px; margin-bottom:6px;">Areal (dekar)</div>
-              <input id="farm_areal" class="ui-input-fallback" inputmode="decimal" value="${escapeHtml(String(farm.areal ?? 0))}" placeholder="0" />
+              <div class="muted" style="font-size:12px; margin-bottom:6px;">Areal (dekar)</div>
+              <input id="areal" class="ui-input-fallback" inputmode="decimal" value="${escapeHtml(String(farm.areal ?? 0))}" />
             </div>
-            <button id="farm_save" class="btn primary" style="width:100%; justify-content:center;">Lagre</button>
+            <button id="save" class="btn primary">Lagre</button>
           </div>
         </div>
       `;
-
-      document.getElementById("farm_save")?.addEventListener("click", () => {
-        const name = (document.getElementById("farm_name")?.value ?? "").trim();
-        const kommune = (document.getElementById("farm_kommune")?.value ?? "").trim();
-        const arealRaw = String(document.getElementById("farm_areal")?.value ?? "0").trim().replace(",", ".");
-        const areal = Number(arealRaw);
-
-        if (!Number.isFinite(areal) || areal < 0) { toast("Ugyldig areal."); return; }
+      document.getElementById("save")?.addEventListener("click", () => {
+        const name = (document.getElementById("name")?.value ?? "").trim();
+        const kommune = (document.getElementById("kommune")?.value ?? "").trim();
+        const areal = toNumber(document.getElementById("areal")?.value ?? "0");
+        if (!Number.isFinite(areal) || areal < 0) return toast("Ugyldig areal.");
 
         const next = clone(d);
         next.farm.name = name;
@@ -1038,9 +581,9 @@ export async function boot() {
     }
   });
 
-  router.registerView("settingsSkifter", {
+  router.registerView("settingsFields", {
     title: "Skifter",
-    subtitle: "Legg inn og vedlikehold skifter",
+    subtitle: "Vedlikehold skifter",
     actions: () => [],
     render(container, { data: d, setData }) {
       const skifter = d.skifter || [];
@@ -1048,44 +591,34 @@ export async function boot() {
 
       container.innerHTML = `
         <div class="notice">
-          Skifter endres sjelden. Totalt: <b>${round1(s.total)}</b> daa.
+          Totalt: <b>${round1(s.total)}</b> daa • Fulldyrket ${round1(s.fulldyrket)} • Overflatedyrket ${round1(s.overflatedyrket)} • Innmarksbeite ${round1(s.innmarksbeite)}
         </div>
 
         <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div>
-              <div style="font-weight:900;">Skifter</div>
-              <div class="muted" style="font-size:12px; margin-top:4px;">
-                Fulldyrket: ${round1(s.fulldyrket)} • Overflatedyrket: ${round1(s.overflatedyrket)} • Innmarksbeite: ${round1(s.innmarksbeite)}
-              </div>
-            </div>
-            <button id="skifte_add" class="btn primary">Legg til</button>
+          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-weight:900;">Skifter</div>
+            <button id="add" class="btn primary">Legg til</button>
           </div>
-
-          <div style="padding:14px;">
-            ${skifter.length === 0 ? `<div class="notice">Ingen skifter ennå.</div>` : `
-              <div style="display:grid; gap:10px;">
-                ${skifter.map((sk) => `
-                  <div style="border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; background:rgba(0,0,0,.18);">
-                    <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
-                      <div>
-                        <div style="font-weight:900;">${escapeHtml(sk.navn || "Skifte")}</div>
-                        <div class="muted" style="font-size:12px; margin-top:4px;">${typeLabel(sk.type)} • ${round1(sk.areal)} daa</div>
-                      </div>
-                      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <button class="btn" data-edit="${escapeHtml(sk.id)}">Rediger</button>
-                        <button class="btn danger" data-del="${escapeHtml(sk.id)}">Slett</button>
-                      </div>
-                    </div>
+          <div style="padding:14px; display:grid; gap:10px;">
+            ${skifter.length ? skifter.map(sk => `
+              <div class="notice">
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                  <div>
+                    <div style="font-weight:900;">${escapeHtml(sk.navn || "Skifte")}</div>
+                    <div class="muted" style="font-size:12px; margin-top:4px;">${escapeHtml(typeLabel(sk.type))} • ${round1(sk.areal)} daa</div>
                   </div>
-                `).join("")}
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="btn" data-edit="${escapeHtml(sk.id)}">Rediger</button>
+                    <button class="btn danger" data-del="${escapeHtml(sk.id)}">Slett</button>
+                  </div>
+                </div>
               </div>
-            `}
+            `).join("") : `<div class="notice">Ingen skifter ennå.</div>`}
           </div>
         </div>
       `;
 
-      document.getElementById("skifte_add")?.addEventListener("click", async () => {
+      document.getElementById("add")?.addEventListener("click", async () => {
         const sk = await askSkifteFields({});
         if (!sk) return;
         const next = clone(d);
@@ -1094,54 +627,50 @@ export async function boot() {
         toast("Skifte lagt til.");
       });
 
-      container.querySelectorAll("[data-edit]").forEach((btn) => {
+      container.querySelectorAll("[data-edit]").forEach(btn => {
         btn.addEventListener("click", async () => {
           const id = btn.getAttribute("data-edit");
           const idx = (d.skifter || []).findIndex(x => x.id === id);
           if (idx < 0) return;
-
-          const updated = await askSkifteFields(d.skifter[idx]);
-          if (!updated) return;
-
+          const upd = await askSkifteFields(d.skifter[idx]);
+          if (!upd) return;
           const next = clone(d);
-          next.skifter[idx] = updated;
+          next.skifter[idx] = upd;
           setData(next);
-          toast("Skifte oppdatert.");
+          toast("Oppdatert.");
         });
       });
 
-      container.querySelectorAll("[data-del]").forEach((btn) => {
+      container.querySelectorAll("[data-del]").forEach(btn => {
         btn.addEventListener("click", async () => {
           const id = btn.getAttribute("data-del");
           const sk = (d.skifter || []).find(x => x.id === id);
           if (!sk) return;
-
           const ok = await confirmDialog({
             title: "Slett skifte?",
-            subtitle: `${sk.navn || "Skifte"} (${round1(sk.areal)} daa) blir slettet.`,
+            subtitle: `${sk.navn || "Skifte"} blir slettet.`,
             okText: "Slett",
             cancelText: "Avbryt",
             danger: true
           });
           if (!ok) return;
-
           const next = clone(d);
           next.skifter = next.skifter.filter(x => x.id !== id);
           setData(next);
-          toast("Skifte slettet.");
+          toast("Slettet.");
         });
       });
     }
   });
 
-  router.registerView("settingsProduksjoner", {
+  router.registerView("settingsProductions", {
     title: "Produksjoner",
     subtitle: "Huk av hva som skal være aktivt",
     actions: () => [],
     render(container, { data: d, setData }) {
       const p = d.productions;
 
-      function cbRow(id, label, checked) {
+      function row(id, label, checked) {
         return `
           <label style="display:flex; gap:10px; align-items:center; cursor:pointer;">
             <input id="${escapeHtml(id)}" type="checkbox" ${checked ? "checked" : ""}/>
@@ -1151,133 +680,79 @@ export async function boot() {
       }
 
       container.innerHTML = `
-        <div class="notice">
-          Dette styrer hva som vises i menyen. Ting som ikke er aktivt blir gjemt.
-        </div>
+        <div class="notice">Dette styrer hva som vises i hovedmenyen.</div>
 
         <div class="card" style="margin-top:12px;">
           <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center;">
-            <div>
-              <div style="font-weight:900;">Produksjoner</div>
-              <div class="muted" style="font-size:12px; margin-top:4px;">Hovedvalg + underpunkter</div>
-            </div>
-            <button id="prod_save" class="btn primary">Lagre</button>
+            <div style="font-weight:900;">Produksjoner</div>
+            <button id="save" class="btn primary">Lagre</button>
           </div>
 
           <div style="padding:14px; display:grid; gap:14px;">
-
-            <div class="card" style="background:rgba(0,0,0,.12); border:1px solid rgba(255,255,255,.10);">
-              <div style="padding:12px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">
-                ${cbRow("p_husdyr", "Husdyr", p.husdyr.enabled)}
-              </div>
-              <div style="padding:12px; display:grid; gap:8px;">
-                ${cbRow("p_sau", "Sau", p.husdyr.sau)}
-                ${cbRow("p_geit", "Geit", p.husdyr.geit)}
-                ${cbRow("p_storfe", "Storfe", p.husdyr.storfe)}
-                ${cbRow("p_gris", "Gris", p.husdyr.gris)}
-                ${cbRow("p_fjorfe", "Fjørfe", p.husdyr.fjorfe)}
-                ${cbRow("p_hest", "Hest", p.husdyr.hest)}
-                <div class="muted" style="font-size:12px; margin-top:6px;">Sau blir hovedparaply for alt sau.</div>
-              </div>
+            <div class="notice">
+              <div style="font-weight:900; margin-bottom:8px;">Husdyr</div>
+              ${row("husdyr_on", "Aktiver Husdyr", p.husdyr.enabled)}
+              <div style="height:8px;"></div>
+              ${row("sau_on", "Sau", p.husdyr.sau)}
+              ${row("geit_on", "Geit", p.husdyr.geit)}
             </div>
 
-            <div class="card" style="background:rgba(0,0,0,.12); border:1px solid rgba(255,255,255,.10);">
-              <div style="padding:12px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">
-                ${cbRow("p_grovfor", "Grovfôr", p.grovfor.enabled)}
-              </div>
-              <div style="padding:12px; display:grid; gap:8px;">
-                ${cbRow("p_eng", "Eng og slått", p.grovfor.eng)}
-                ${cbRow("p_beite", "Beite", p.grovfor.beite)}
-                ${cbRow("p_forplan", "Fôrplan", p.grovfor.forplan)}
-                ${cbRow("p_lager", "Grovfôrlager", p.grovfor.lager)}
-              </div>
+            <div class="notice">
+              <div style="font-weight:900; margin-bottom:8px;">Grovfôr</div>
+              ${row("grov_on", "Aktiver Grovfôr", p.grovfor.enabled)}
             </div>
 
-            <div class="card" style="background:rgba(0,0,0,.12); border:1px solid rgba(255,255,255,.10);">
-              <div style="padding:12px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">
-                ${cbRow("p_fg", "Frukt og grønt", p.fruktGront.enabled)}
-              </div>
-              <div style="padding:12px; display:grid; gap:8px;">
-                ${cbRow("p_rabarbra", "Rabarbra", p.fruktGront.rabarbra)}
-                ${cbRow("p_potet", "Potet", p.fruktGront.potet)}
-                ${cbRow("p_fruktbaer", "Frukt og bær", p.fruktGront.fruktBaer)}
-                ${cbRow("p_rot", "Rotgrønnsaker", p.fruktGront.rot)}
-                ${cbRow("p_kal", "Kålvekster", p.fruktGront.kal)}
-                ${cbRow("p_bladlok", "Løk / bladgrønt", p.fruktGront.bladLok)}
-              </div>
+            <div class="notice">
+              <div style="font-weight:900; margin-bottom:8px;">Frukt og grønt</div>
+              ${row("fg_on", "Aktiver Frukt og grønt", p.fruktGront.enabled)}
+              <div style="height:8px;"></div>
+              ${row("rabarbra_on", "Rabarbra", p.fruktGront.rabarbra)}
             </div>
-
           </div>
         </div>
       `;
 
-      function getChecked(id) { return !!document.getElementById(id)?.checked; }
+      function chk(id) { return !!document.getElementById(id)?.checked; }
 
-      document.getElementById("prod_save")?.addEventListener("click", () => {
+      document.getElementById("save")?.addEventListener("click", () => {
         const next = clone(d);
 
-        // hoved
-        next.productions.husdyr.enabled = getChecked("p_husdyr");
-        next.productions.grovfor.enabled = getChecked("p_grovfor");
-        next.productions.fruktGront.enabled = getChecked("p_fg");
+        next.productions.husdyr.enabled = chk("husdyr_on");
+        next.productions.husdyr.sau = chk("sau_on");
+        next.productions.husdyr.geit = chk("geit_on");
 
-        // husdyr
-        next.productions.husdyr.sau = getChecked("p_sau");
-        next.productions.husdyr.geit = getChecked("p_geit");
-        next.productions.husdyr.storfe = getChecked("p_storfe");
-        next.productions.husdyr.gris = getChecked("p_gris");
-        next.productions.husdyr.fjorfe = getChecked("p_fjorfe");
-        next.productions.husdyr.hest = getChecked("p_hest");
+        next.productions.grovfor.enabled = chk("grov_on");
 
-        // grovfôr
-        next.productions.grovfor.eng = getChecked("p_eng");
-        next.productions.grovfor.beite = getChecked("p_beite");
-        next.productions.grovfor.forplan = getChecked("p_forplan");
-        next.productions.grovfor.lager = getChecked("p_lager");
+        next.productions.fruktGront.enabled = chk("fg_on");
+        next.productions.fruktGront.rabarbra = chk("rabarbra_on");
 
-        // frukt/grønt
-        next.productions.fruktGront.rabarbra = getChecked("p_rabarbra");
-        next.productions.fruktGront.potet = getChecked("p_potet");
-        next.productions.fruktGront.fruktBaer = getChecked("p_fruktbaer");
-        next.productions.fruktGront.rot = getChecked("p_rot");
-        next.productions.fruktGront.kal = getChecked("p_kal");
-        next.productions.fruktGront.bladLok = getChecked("p_bladlok");
-
-        // hvis hoved er av: slå av under for ren meny
-        if (!next.productions.husdyr.enabled) {
-          next.productions.husdyr = { enabled:false, sau:false, geit:false, storfe:false, gris:false, fjorfe:false, hest:false };
-        }
-        if (!next.productions.grovfor.enabled) {
-          next.productions.grovfor = { enabled:false, eng:false, beite:false, forplan:false, lager:false };
-        }
-        if (!next.productions.fruktGront.enabled) {
-          next.productions.fruktGront = { enabled:false, rabarbra:false, potet:false, fruktBaer:false, rot:false, kal:false, bladLok:false };
-        }
+        // hvis hoved AV -> slå av under for ren meny
+        if (!next.productions.husdyr.enabled) next.productions.husdyr = { enabled:false, sau:false, geit:false };
+        if (!next.productions.fruktGront.enabled) next.productions.fruktGront = { enabled:false, rabarbra:false };
 
         setData(next);
-        toast("Produksjoner lagret. Menyen er oppdatert.");
+        toast("Lagret. Meny oppdatert.");
       });
     }
   });
 
   router.registerView("settingsBackup", {
     title: "Backup / Import",
-    subtitle: "Trygg lagring av data",
+    subtitle: "Kopier data som tekst",
     actions: () => [],
     render(container, { setData }) {
       container.innerHTML = `
-        <div class="notice">Dette er viktig. Ta backup før større endringer.</div>
-
-        <div class="card" style="margin-top:12px;">
+        <div class="card">
           <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Backup</div>
           <div style="padding:14px; display:grid; gap:10px;">
-            <button id="b_export" class="btn primary" style="justify-content:center;">Eksporter data (JSON)</button>
-            <button id="b_import" class="btn" style="justify-content:center;">Importer data (JSON)</button>
+            <button id="exp" class="btn primary">Eksporter (JSON)</button>
+            <button id="imp" class="btn">Importer (JSON)</button>
+            <button id="wipe" class="btn danger">Nullstill alt</button>
           </div>
         </div>
       `;
 
-      document.getElementById("b_export")?.addEventListener("click", async () => {
+      document.getElementById("exp")?.addEventListener("click", async () => {
         const txt = exportData();
         await showCodeDialog({
           title: "Eksport (JSON)",
@@ -1288,7 +763,7 @@ export async function boot() {
         });
       });
 
-      document.getElementById("b_import")?.addEventListener("click", async () => {
+      document.getElementById("imp")?.addEventListener("click", async () => {
         const json = await promptDialog({
           title: "Importer (JSON)",
           subtitle: "Lim inn eksportert JSON her.",
@@ -1301,98 +776,70 @@ export async function boot() {
         if (json === null) return;
 
         const ok = importData(json);
-        if (!ok) return toast("Import feilet. Sjekk JSON.");
+        if (!ok) return toast("Import feilet.");
         setData(loadData());
         toast("Import ok.");
+      });
+
+      document.getElementById("wipe")?.addEventListener("click", async () => {
+        const ok = await confirmDialog({
+          title: "Nullstill alt?",
+          subtitle: "Dette sletter alle data på denne enheten.",
+          okText: "Slett alt",
+          cancelText: "Avbryt",
+          danger: true
+        });
+        if (!ok) return;
+        setData(resetData());
+        toast("Nullstilt.");
       });
     }
   });
 
-  // =========================
-  // Produksjons-huber / placeholders
-  // =========================
-  router.registerView("husdyrHub", {
-    title: "Husdyr",
-    subtitle: "Paraply",
-    actions: () => [],
-    render(container, { data: d }) {
-      if (!d.productions.husdyr.enabled) {
-        container.innerHTML = `<div class="notice">Husdyr er ikke aktivert. Gå til <b>Innstillinger → Produksjoner</b>.</div>`;
-        return;
-      }
-      const p = d.productions.husdyr;
-      const items = [];
-      if (p.sau) items.push({ t: "Sau", r: "sau" });
-      if (p.geit) items.push({ t: "Geit", r: "geit" });
-      if (p.storfe) items.push({ t: "Storfe", r: "storfe" });
-      if (p.gris) items.push({ t: "Gris", r: "gris" });
-      if (p.fjorfe) items.push({ t: "Fjørfe", r: "fjorfe" });
-      if (p.hest) items.push({ t: "Hest", r: "hest" });
+  // Produksjonssider (stub for nå)
+  router.registerView("husdyr", { title:"Husdyr", subtitle:"Paraply", actions:()=>[], render(c,{data:d}) {
+    if (!d.productions.husdyr.enabled) return c.innerHTML = `<div class="notice">Aktiver i Innstillinger → Produksjoner.</div>`;
+    c.innerHTML = `<div class="notice">Husdyr-paraply. Sau skal bli hovedparaply for alt som angår sau.</div>`;
+  }});
 
-      container.innerHTML = `
-        <div class="notice">Velg produksjon.</div>
-        <div class="card" style="margin-top:12px;">
-          <div style="padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:900;">Husdyr</div>
-          <div style="padding:14px; display:grid; gap:10px;">
-            ${items.length ? items.map(x => `
-              <button class="btn primary" data-go="${escapeHtml(x.r)}" style="justify-content:space-between;">
-                <span><b>${escapeHtml(x.t)}</b></span><span class="muted" style="font-size:12px;">Åpne</span>
-              </button>
-            `).join("") : `<div class="notice">Ingen underproduksjoner valgt.</div>`}
-          </div>
-        </div>
-      `;
-      container.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => { window.location.hash = b.getAttribute("data-go"); }));
-    }
-  });
+  router.registerView("sau", { title:"Sau", subtitle:"Paraply", actions:()=>[], render(c,{data:d}) {
+    if (!d.productions.husdyr.enabled || !d.productions.husdyr.sau) return c.innerHTML = `<div class="notice">Aktiver Sau i Innstillinger → Produksjoner.</div>`;
+    c.innerHTML = `<div class="notice">Sau-paraply (neste steg: grupper, lamming, hold/fôr, helse, tilskudd, rapporter).</div>`;
+  }});
 
-  router.registerView("sau", {
-    title: "Sau",
-    subtitle: "Paraply: alt om sau skal ligge her",
-    actions: () => [],
-    render(container, { data: d }) {
-      if (!d.productions.husdyr.enabled || !d.productions.husdyr.sau) {
-        container.innerHTML = `<div class="notice">Sau er ikke aktivert. Gå til <b>Innstillinger → Produksjoner</b>.</div>`;
-        return;
-      }
-      container.innerHTML = `
-        <div class="notice">
-          Dette er Sau-paraplyen. Neste steg er å bygge: grupper, lamming, hold/fôr, helse, tilskudd, rapporter – alt her inne.
-        </div>
-      `;
-    }
-  });
+  router.registerView("geit", { title:"Geit", subtitle:"Paraply", actions:()=>[], render(c,{data:d}) {
+    if (!d.productions.husdyr.enabled || !d.productions.husdyr.geit) return c.innerHTML = `<div class="notice">Aktiver Geit i Innstillinger → Produksjoner.</div>`;
+    c.innerHTML = `<div class="notice">Geit-paraply (kommer).</div>`;
+  }});
 
-  // placeholders
-  router.registerView("geit", { title:"Geit", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Geit kommer.</div>`; }});
-  router.registerView("storfe", { title:"Storfe", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Storfe kommer.</div>`; }});
-  router.registerView("gris", { title:"Gris", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Gris kommer.</div>`; }});
-  router.registerView("fjorfe", { title:"Fjørfe", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Fjørfe kommer.</div>`; }});
-  router.registerView("hest", { title:"Hest", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Hest kommer.</div>`; }});
+  router.registerView("grovfor", { title:"Grovfôr", subtitle:"Paraply", actions:()=>[], render(c,{data:d}) {
+    if (!d.productions.grovfor.enabled) return c.innerHTML = `<div class="notice">Aktiver Grovfôr i Innstillinger → Produksjoner.</div>`;
+    c.innerHTML = `<div class="notice">Grovfôr-paraply (kommer).</div>`;
+  }});
 
-  router.registerView("grovforHub", { title:"Grovfôr", subtitle:"Paraply", actions:()=>[], render(c,{data:d}){ c.innerHTML = d.productions.grovfor.enabled ? `<div class="notice">Grovfôr-paraply (kommer mer).</div>` : `<div class="notice">Aktiver i Innstillinger → Produksjoner.</div>`; }});
-  router.registerView("grovforEng", { title:"Eng og slått", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
-  router.registerView("grovforBeite", { title:"Beite", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
-  router.registerView("grovforForplan", { title:"Fôrplan", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
-  router.registerView("grovforLager", { title:"Grovfôrlager", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
+  router.registerView("fruktgront", { title:"Frukt og grønt", subtitle:"Paraply", actions:()=>[], render(c,{data:d}) {
+    if (!d.productions.fruktGront.enabled) return c.innerHTML = `<div class="notice">Aktiver Frukt og grønt i Innstillinger → Produksjoner.</div>`;
+    c.innerHTML = `<div class="notice">Frukt og grønt-paraply (kommer). Rabarbra kan ligge her.</div>`;
+  }});
 
-  router.registerView("fgHub", { title:"Frukt og grønt", subtitle:"Paraply", actions:()=>[], render(c,{data:d}){ c.innerHTML = d.productions.fruktGront.enabled ? `<div class="notice">Frukt og grønt-paraply (kommer mer).</div>` : `<div class="notice">Aktiver i Innstillinger → Produksjoner.</div>`; }});
-  router.registerView("rabarbra", { title:"Rabarbra", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Rabarbra kommer.</div>`; }});
-  router.registerView("potet", { title:"Potet", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Potet kommer.</div>`; }});
-  router.registerView("fruktBaer", { title:"Frukt og bær", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
-  router.registerView("rotgront", { title:"Rotgrønnsaker", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
-  router.registerView("kalvekster", { title:"Kålvekster", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
-  router.registerView("bladlok", { title:"Løk/bladgrønt", subtitle:"(kommer)", actions:()=>[], render(c){ c.innerHTML = `<div class="notice">Kommer.</div>`; }});
+  router.registerView("rabarbra", { title:"Rabarbra", subtitle:"(kommer)", actions:()=>[], render(c,{data:d}) {
+    if (!d.productions.fruktGront.enabled || !d.productions.fruktGront.rabarbra) return c.innerHTML = `<div class="notice">Aktiver Rabarbra i Innstillinger → Produksjoner.</div>`;
+    c.innerHTML = `<div class="notice">Rabarbra-modul (kommer) – blir stor for Karmøy Safteri.</div>`;
+  }});
 
-  // ---- init ----
-  enforceNavNow();
+  // --------------------
+  // Init
+  // --------------------
+  enforceNav();
   router.init("dashboard");
+  // sikre at vi vinner over router etter init
+  setTimeout(enforceNav, 0);
   pill.textContent = "Klar";
 }
 
-// =========================
+// --------------------
 // Data shape
-// =========================
+// --------------------
 function ensureDataShape(d) {
   d = d || {};
   d.farm = d.farm || { name: "", kommune: "", areal: 0 };
@@ -1405,43 +852,29 @@ function ensureDataShape(d) {
   if (!d.productions.grovfor) d.productions.grovfor = {};
   if (!d.productions.fruktGront) d.productions.fruktGront = {};
 
-  // Ny, enkel struktur:
   d.productions.husdyr = {
     enabled: !!d.productions.husdyr.enabled,
     sau: !!d.productions.husdyr.sau,
-    geit: !!d.productions.husdyr.geit,
-    storfe: !!d.productions.husdyr.storfe,
-    gris: !!d.productions.husdyr.gris,
-    fjorfe: !!d.productions.husdyr.fjorfe,
-    hest: !!d.productions.husdyr.hest
+    geit: !!d.productions.husdyr.geit
   };
 
   d.productions.grovfor = {
-    enabled: !!d.productions.grovfor.enabled,
-    eng: !!d.productions.grovfor.eng,
-    beite: !!d.productions.grovfor.beite,
-    forplan: !!d.productions.grovfor.forplan,
-    lager: !!d.productions.grovfor.lager
+    enabled: !!d.productions.grovfor.enabled
   };
 
   d.productions.fruktGront = {
     enabled: !!d.productions.fruktGront.enabled,
-    rabarbra: !!d.productions.fruktGront.rabarbra,
-    potet: !!d.productions.fruktGront.potet,
-    fruktBaer: !!d.productions.fruktGront.fruktBaer,
-    rot: !!d.productions.fruktGront.rot,
-    kal: !!d.productions.fruktGront.kal,
-    bladLok: !!d.productions.fruktGront.bladLok
+    rabarbra: !!d.productions.fruktGront.rabarbra
   };
 
   return d;
 }
 
-// =========================
-// UI styling helpers
-// =========================
+// --------------------
+// Styles
+// --------------------
 function ensureSolidButtons() {
-  const id = "farmapp_solid_buttons_settings_v1";
+  const id = "farmapp_solid_buttons_safe_v1";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
@@ -1464,7 +897,7 @@ function ensureSolidButtons() {
 }
 
 function ensureFallbackInputsStyle() {
-  const id = "min_gard_input_style_settings_v1";
+  const id = "farmapp_input_style_safe_v1";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
@@ -1487,7 +920,7 @@ function ensureFallbackInputsStyle() {
 }
 
 function ensureSelectDialogStyles() {
-  const id = "farmapp_select_dialog_styles_settings_v1";
+  const id = "farmapp_select_dialog_styles_safe_v1";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
@@ -1561,4 +994,4 @@ function selectDialog({ title="Velg", subtitle="", label="", value="", options=[
     document.body.appendChild(backdrop);
     setTimeout(() => select.focus(), 0);
   });
-    } 
+}
