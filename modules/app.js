@@ -1,9 +1,10 @@
 // modules/app.js
 // Core boot-fil for Farmapp
-// Koblet til storage.js (lokal lagring)
-// FIKS: "Min gård" bruker nå skjema + Lagre (ingen prompt/alert for input)
+// Bruker storage.js (lokal lagring) + ui.js (proffe dialoger)
+// "Min gård" bruker skjema + Lagre
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
+import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml } from "./ui.js";
 
 export async function boot() {
   const pill = document.getElementById("pillStatus");
@@ -20,12 +21,17 @@ export async function boot() {
 
   pill.textContent = "Laster data…";
 
-  // ---- Data (foreløpig globalt her) ----
+  // ---- Data ----
   let data = loadData();
+
+  function clone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
 
   function persist() {
     const ok = saveData(data);
     pill.textContent = ok ? "Klar" : "Kunne ikke lagre";
+    return ok;
   }
 
   // ---- Enkel view-motor (router kommer senere) ----
@@ -63,7 +69,14 @@ export async function boot() {
       btn.className =
         "btn" + (a.primary ? " primary" : "") + (a.danger ? " danger" : "");
       btn.textContent = a.label;
-      btn.onclick = () => a.onClick({ data, setData, rerender });
+      btn.onclick = async () => {
+        try {
+          await a.onClick({ data, setData, rerender });
+        } catch (e) {
+          console.error(e);
+          toast("Noe gikk galt. Se console for detaljer.");
+        }
+      };
       actions.appendChild(btn);
     });
 
@@ -91,33 +104,6 @@ export async function boot() {
     });
   }
 
-  // ---- Helpers ----
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (m) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[m]));
-  }
-
-  function openExportWindow(text) {
-    const w = window.open("", "_blank");
-    if (!w) return alert("Popup blokkert. Kopier manuelt fra console.");
-    w.document.write(
-      `<pre style="white-space:pre-wrap; word-break:break-word; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">${escapeHtml(
-        text
-      )}</pre>`
-    );
-    w.document.close();
-  }
-
-  function clone(obj) {
-    // Robust kloning uten å være avhengig av structuredClone
-    return JSON.parse(JSON.stringify(obj));
-  }
-
   // =========================
   // VIEWS
   // =========================
@@ -128,41 +114,55 @@ export async function boot() {
     actions: () => [
       {
         label: "Eksporter data",
-        onClick: () => {
+        onClick: async () => {
           const txt = exportData();
-          if (navigator.clipboard?.writeText) {
-            navigator.clipboard
-              .writeText(txt)
-              .then(() => alert("Eksport kopiert til utklippstavle."))
-              .catch(() => openExportWindow(txt));
-          } else {
-            openExportWindow(txt);
-          }
-        },
+          await showCodeDialog({
+            title: "Eksport (JSON)",
+            subtitle: "Kopier og lagre denne teksten. Du kan importere den tilbake senere.",
+            code: txt,
+            copyText: "Kopier",
+            okText: "Lukk"
+          });
+        }
       },
       {
         label: "Importer data",
-        onClick: ({ setData }) => {
-          const json = window.prompt("Lim inn eksportert JSON her:");
-          if (!json) return;
+        onClick: async ({ setData }) => {
+          const json = await promptDialog({
+            title: "Importer (JSON)",
+            subtitle: "Lim inn eksportert JSON her.",
+            label: "JSON",
+            value: "",
+            placeholder: "{ ... }",
+            okText: "Importer",
+            cancelText: "Avbryt"
+          });
+          if (json === null) return;
+
           const ok = importData(json);
-          if (!ok) return alert("Import feilet. Sjekk at JSON er gyldig.");
+          if (!ok) return toast("Import feilet. Sjekk at teksten er gyldig JSON.");
+
           setData(loadData());
-          alert("Import ok.");
-        },
+          toast("Import ok.");
+        }
       },
       {
         label: "Nullstill alt",
         danger: true,
-        onClick: ({ setData }) => {
-          const ok = window.confirm(
-            "Sikker? Dette sletter ALT lagret innhold i appen på denne enheten."
-          );
+        onClick: async ({ setData }) => {
+          const ok = await confirmDialog({
+            title: "Nullstill alt?",
+            subtitle: "Dette sletter ALT lagret innhold i appen på denne enheten.",
+            okText: "Slett alt",
+            cancelText: "Avbryt",
+            danger: true
+          });
           if (!ok) return;
+
           setData(resetData());
-          alert("Nullstilt.");
-        },
-      },
+          toast("Nullstilt.");
+        }
+      }
     ],
     render(container, { data: d }) {
       const farm = d.farm || {};
@@ -177,7 +177,7 @@ export async function boot() {
           </div>
         </div>
       `;
-    },
+    }
   });
 
   registerView("minGård", {
@@ -187,8 +187,7 @@ export async function boot() {
       {
         label: "Lagre",
         primary: true,
-        onClick: ({ data, setData }) => {
-          // Lagre-knappen i topp (samme som i skjemaet)
+        onClick: async ({ data, setData }) => {
           const nameEl = document.getElementById("farm_name");
           const kommuneEl = document.getElementById("farm_kommune");
           const arealEl = document.getElementById("farm_areal");
@@ -199,7 +198,7 @@ export async function boot() {
           const areal = Number(arealRaw);
 
           if (!Number.isFinite(areal) || areal < 0) {
-            alert("Ugyldig areal. Bruk et tall (f.eks. 15 eller 15,5).");
+            toast("Ugyldig areal. Bruk et tall (f.eks. 15 eller 15,5).");
             return;
           }
 
@@ -210,12 +209,13 @@ export async function boot() {
           next.farm.areal = areal;
 
           setData(next);
-          alert("Lagret.");
-        },
-      },
+          toast("Lagret.");
+        }
+      }
     ],
     render(container, { data: d, setData }) {
       const farm = d.farm || {};
+
       container.innerHTML = `
         <div class="notice">
           <div style="font-weight:700; margin-bottom:10px; color:#e8f0f7;">Oppsett</div>
@@ -247,7 +247,7 @@ export async function boot() {
         </div>
       `;
 
-      // liten inline-style for input uten at vi bruker ui.js ennå
+      // Input styling (lett) – ui.js har sine egne, men disse inputene lever i hovedsiden
       const styleId = "min_gard_input_style";
       if (!document.getElementById(styleId)) {
         const st = document.createElement("style");
@@ -271,7 +271,7 @@ export async function boot() {
       }
 
       const btn = document.getElementById("farm_save");
-      btn?.addEventListener("click", () => {
+      btn?.addEventListener("click", async () => {
         const name = (document.getElementById("farm_name")?.value ?? "").trim();
         const kommune = (document.getElementById("farm_kommune")?.value ?? "").trim();
         const arealRaw = String(document.getElementById("farm_areal")?.value ?? "0")
@@ -280,7 +280,7 @@ export async function boot() {
         const areal = Number(arealRaw);
 
         if (!Number.isFinite(areal) || areal < 0) {
-          alert("Ugyldig areal. Bruk et tall (f.eks. 15 eller 15,5).");
+          toast("Ugyldig areal. Bruk et tall (f.eks. 15 eller 15,5).");
           return;
         }
 
@@ -291,9 +291,9 @@ export async function boot() {
         next.farm.areal = areal;
 
         setData(next);
-        alert("Lagret.");
+        toast("Lagret.");
       });
-    },
+    }
   });
 
   // ---- init ----
