@@ -2,13 +2,12 @@
 // Farmapp core
 // storage.js (data) + ui.js (dialoger) + router.js (navigasjon)
 // Inneholder: Oversikt + Min gård + Skifter (CRUD)
-// + PDF: Skifterapport (Print -> Lagre som PDF)
+// + PDF: Skifterapport (Print -> Lagre som PDF) via dynamisk import (robust)
 // Proff UI: solide knapper + dropdown for skifte-type + tette dialoger (via ui.js)
 
 import { loadData, saveData, resetData, exportData, importData } from "./storage.js";
 import { toast, confirmDialog, promptDialog, showCodeDialog, escapeHtml, el } from "./ui.js";
 import { createRouter } from "./router.js";
-import { openPrintReport, buildSkifteReportHTML } from "./pdf.js";
 
 export async function boot() {
   ensureSolidButtons();
@@ -90,7 +89,6 @@ export async function boot() {
   }
 
   async function askSkifteFields(initial = {}) {
-    // 1) navn
     const navn = await promptDialog({
       title: "Skifte",
       subtitle: "Navn / ID",
@@ -102,7 +100,6 @@ export async function boot() {
     });
     if (navn === null) return null;
 
-    // 2) areal
     const arealTxt = await promptDialog({
       title: "Skifte",
       subtitle: "Areal i dekar",
@@ -120,7 +117,6 @@ export async function boot() {
       return null;
     }
 
-    // 3) type – DROPDOWN (nedtrekk)
     const type = await selectDialog({
       title: "Skifte",
       subtitle: "Velg type areal",
@@ -157,19 +153,21 @@ export async function boot() {
         primary: true,
         onClick: async ({ data: d }) => {
           try {
-            const html = buildSkifteReportHTML({
+            // Dynamisk import => appen laster selv om pdf.js mangler
+            const pdf = await import("./pdf.js");
+            const html = pdf.buildSkifteReportHTML({
               data: d,
               farmName: d?.farm?.name || "",
               kommune: d?.farm?.kommune || ""
             });
-            openPrintReport({
+            pdf.openPrintReport({
               title: "Skifterapport",
               html,
               fileName: "skifterapport"
             });
           } catch (e) {
             console.error(e);
-            toast("Kunne ikke åpne rapport. Sjekk at popups er tillatt.");
+            toast("PDF-modul mangler eller popups er blokkert. Sjekk at modules/pdf.js finnes og at popups er tillatt.");
           }
         }
       },
@@ -243,16 +241,12 @@ export async function boot() {
             <div class="muted" style="margin-top:6px; font-size:12px;">
               Fulldyrket: ${round1(s.fulldyrket)} • Overflatedyrket: ${round1(s.overflatedyrket)} • Innmarksbeite: ${round1(s.innmarksbeite)}
             </div>
-            <div class="muted" style="margin-top:8px; font-size:12px;">
-              Tips: Bruk knappen <b>Skifterapport (PDF)</b> for utskrift.
-            </div>
           </div>
         </div>
       `;
     }
   });
 
-  // Skifter under Min gård (sjeldne endringer – slik du instruerte)
   router.registerView("minGård", {
     title: "Min gård",
     subtitle: "Grunninfo + Skifter (sjeldne endringer)",
@@ -359,10 +353,6 @@ export async function boot() {
             `}
           </div>
         </div>
-
-        <div class="muted" style="margin-top:10px; font-size:12px; line-height:1.35;">
-          Skifter ligger under <b>Min gård</b> fordi dette er “sjeldne endringer”.
-        </div>
       `;
 
       document.getElementById("farm_save")?.addEventListener("click", async () => {
@@ -435,12 +425,9 @@ export async function boot() {
     }
   });
 
-  // ---- init ----
   router.init("dashboard");
   pill.textContent = "Klar";
 }
-
-// ---------- helpers ----------
 
 function ensureDataShape(d) {
   d = d || {};
@@ -457,9 +444,8 @@ function round1(n) {
   return Math.round(x * 10) / 10;
 }
 
-// Solid knapper / nav-følelse (tett, mindre “glass”)
 function ensureSolidButtons() {
-  const id = "farmapp_solid_buttons_v2";
+  const id = "farmapp_solid_buttons_v3";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
@@ -468,7 +454,6 @@ function ensureSolidButtons() {
       background: rgba(255,255,255,.12) !important;
       border: 1px solid rgba(255,255,255,.18) !important;
     }
-    .btn:hover{ background: rgba(255,255,255,.16) !important; }
     .btn.primary{
       background: #0f2a1f !important;
       border-color: rgba(24,196,108,.65) !important;
@@ -477,8 +462,6 @@ function ensureSolidButtons() {
       background: #3a1a1a !important;
       border-color: rgba(255,92,92,.65) !important;
     }
-
-    /* Nav buttons (dersom .nav finnes i index.css) */
     .nav button{
       background:#18222b !important;
       border-color: rgba(255,255,255,.14) !important;
@@ -491,9 +474,8 @@ function ensureSolidButtons() {
   document.head.appendChild(st);
 }
 
-// Inputstil i "Min gård"
 function ensureFallbackInputsStyle() {
-  const styleId = "min_gard_input_style_v2";
+  const styleId = "min_gard_input_style_v3";
   if (document.getElementById(styleId)) return;
   const st = document.createElement("style");
   st.id = styleId;
@@ -515,8 +497,7 @@ function ensureFallbackInputsStyle() {
   document.head.appendChild(st);
 }
 
-// Dropdown-dialog (nedtrekk) – uten å endre ui.js
-function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", options = [], okText = "OK", cancelText = "Avbryt" }) {
+function selectDialog({ title="Velg", subtitle="", label="", value="", options=[], okText="OK", cancelText="Avbryt" }) {
   return new Promise((resolve) => {
     const select = el("select", { class: "ui-select" }, []);
     for (const opt of options) {
@@ -533,7 +514,6 @@ function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", o
       el("div", { class: "ui-small" }, "Tips: ESC eller trykk utenfor for å avbryte.")
     ]);
 
-    // Modal-struktur matcher ui.js sine klasser
     const backdrop = el("div", { class: "ui-backdrop" });
     const modal = el("div", { class: "ui-modal", role: "dialog", "aria-modal": "true" });
     const head = el("div", { class: "ui-modal-head" }, [
@@ -577,7 +557,7 @@ function selectDialog({ title = "Velg", subtitle = "", label = "", value = "", o
 }
 
 function ensureSelectDialogStyles() {
-  const id = "farmapp_select_dialog_styles_v2";
+  const id = "farmapp_select_dialog_styles_v3";
   if (document.getElementById(id)) return;
   const st = document.createElement("style");
   st.id = id;
