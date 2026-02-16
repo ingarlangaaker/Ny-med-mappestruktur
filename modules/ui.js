@@ -1,6 +1,7 @@
 // modules/ui.js
 // Felles UI-hjelpere (ingen business-logikk)
-// Proffe dialoger (bedre enn alert/prompt/confirm på mobil)
+// Proffe dialoger (mobilvennlig)
+// PATCH: Dialoger skal være HELT TETTE (ikke gjennomsiktige)
 
 export function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, m => ({
@@ -28,6 +29,7 @@ export function el(tag, attrs = {}, children = []) {
   return node;
 }
 
+// ---------- Modal (dialog) ----------
 function ensureModalStyles() {
   if (document.getElementById("ui_modal_styles")) return;
   const style = document.createElement("style");
@@ -35,63 +37,77 @@ function ensureModalStyles() {
   style.textContent = `
     .ui-backdrop{
       position:fixed; inset:0; z-index:9999;
-      background:rgba(0,0,0,.55);
+      background:rgba(0,0,0,.65);           /* mørkere, mer proff */
       display:flex; align-items:center; justify-content:center;
       padding:16px;
     }
     .ui-modal{
       width:min(560px, 100%);
-      background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
-      border:1px solid rgba(255,255,255,.10);
+      background:#121a22;                   /* HELT TETT */
+      border:1px solid rgba(255,255,255,.12);
       border-radius:18px;
-      box-shadow:0 18px 50px rgba(0,0,0,.55);
+      box-shadow:0 18px 50px rgba(0,0,0,.65);
       overflow:hidden;
       color:inherit;
     }
-    .ui-modal-head{ padding:14px 14px 10px; border-bottom:1px solid rgba(255,255,255,.06); }
-    .ui-modal-title{ font-weight:800; margin:0; font-size:16px; }
-    .ui-modal-sub{ margin-top:4px; color:rgba(232,240,247,.75); font-size:13px; line-height:1.35; }
-    .ui-modal-body{ padding:14px; }
+    .ui-modal-head{
+      padding:14px 14px 10px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      background:#121a22;                   /* tett */
+    }
+    .ui-modal-title{ font-weight:900; margin:0; font-size:16px; }
+    .ui-modal-sub{ margin-top:4px; color:rgba(232,240,247,.78); font-size:13px; line-height:1.35; }
+    .ui-modal-body{
+      padding:14px;
+      background:#121a22;                   /* tett */
+    }
     .ui-field{ display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
-    .ui-label{ font-size:13px; color:rgba(232,240,247,.75); }
+    .ui-label{ font-size:13px; color:rgba(232,240,247,.78); }
     .ui-input{
       width:100%;
       padding:12px 12px;
       border-radius:14px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(0,0,0,.20);
+      border:1px solid rgba(255,255,255,.16);
+      background:#0f1720;                   /* tett input */
       color:inherit;
       outline:none;
     }
-    .ui-input:focus{ border-color: rgba(24,196,108,.55); box-shadow: 0 0 0 4px rgba(24,196,108,.12); }
+    .ui-input:focus{
+      border-color: rgba(24,196,108,.60);
+      box-shadow: 0 0 0 4px rgba(24,196,108,.14);
+    }
     .ui-actions{
       padding:12px 14px;
-      border-top:1px solid rgba(255,255,255,.06);
+      border-top:1px solid rgba(255,255,255,.08);
+      background:#121a22;                   /* tett */
       display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;
     }
     .ui-btn{
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.16);
+      background:#18222b;                   /* tett knapp */
       color:inherit;
       padding:10px 12px;
       border-radius:14px;
       cursor:pointer;
     }
+    .ui-btn:hover{ background:#1b2732; }
     .ui-btn.primary{
-      border-color: rgba(24,196,108,.50);
-      background: linear-gradient(180deg, rgba(24,196,108,.22), rgba(24,196,108,.10));
+      border-color: rgba(24,196,108,.60);
+      background:#0f2a1f;                   /* tett primary */
     }
+    .ui-btn.primary:hover{ background:#123325; }
     .ui-btn.danger{
-      border-color: rgba(255,92,92,.55);
-      background: rgba(255,92,92,.10);
+      border-color: rgba(255,92,92,.60);
+      background:#3a1a1a;                   /* tett danger */
     }
-    .ui-small{ font-size:12px; color:rgba(232,240,247,.70); line-height:1.35; }
+    .ui-btn.danger:hover{ background:#462020; }
+    .ui-small{ font-size:12px; color:rgba(232,240,247,.72); line-height:1.35; }
     .ui-pre{
       white-space:pre-wrap; word-break:break-word;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size:12px;
-      background:rgba(0,0,0,.18);
-      border:1px solid rgba(255,255,255,.10);
+      background:#0f1720;                   /* tett */
+      border:1px solid rgba(255,255,255,.14);
       border-radius:14px;
       padding:12px;
     }
@@ -129,7 +145,9 @@ function showModal({ title, subtitle, bodyNode, buttons, onCancel }) {
   const body = el("div", { class: "ui-modal-body" }, bodyNode || "");
   const acts = el("div", { class: "ui-actions" });
 
-  const cleanup = closeOnEsc(backdrop, () => onCancel?.());
+  const cleanup = closeOnEsc(backdrop, () => {
+    onCancel?.();
+  });
 
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) {
@@ -249,6 +267,7 @@ export function showCodeDialog({ title = "Eksport", subtitle = "", code = "", ok
               close();
               resolve(true);
             } catch (e) {
+              // fallback hvis clipboard ikke funker
               alert("Kunne ikke kopiere automatisk. Marker og kopier manuelt.");
             }
           }
