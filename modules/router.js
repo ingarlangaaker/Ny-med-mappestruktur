@@ -1,5 +1,8 @@
 // modules/router.js
-// Robust router for hash-routes (tåler æøå og URL-encoding)
+// Robust router for hash-routes
+// - Støtter æøå via decodeURIComponent
+// - Støtter dynamiske ruter via "route:param" (f.eks. sauIndivid:sheep_123)
+// - Støtter også "route?x=1" i samme streng
 
 export function createRouter({ navEl, titleEl, subEl, actionsEl, viewEl }) {
   const views = new Map();
@@ -13,11 +16,42 @@ export function createRouter({ navEl, titleEl, subEl, actionsEl, viewEl }) {
   function normalizeHash(hash) {
     const raw = String(hash || "").replace(/^#/, "").trim();
     if (!raw) return "";
-    try { return decodeURIComponent(raw); } catch { return raw; }
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
   }
 
-  function safeDecode(s) {
-    try { return decodeURIComponent(String(s || "")); } catch { return String(s || ""); }
+  function parseRoute(routeStr) {
+    // routeStr kan være:
+    // "sprøyting"
+    // "sauIndivid:sheep_abc123"
+    // "sauIndivid:sheep_abc123?tab=events"
+    // "sprøyting?from=2026-01-01"
+    const raw = String(routeStr || "").trim();
+    if (!raw) return { name: "", param: "", query: {}, raw: "" };
+
+    const [left, qs] = raw.split("?");
+    const query = {};
+    if (qs) {
+      try {
+        const sp = new URLSearchParams(qs);
+        for (const [k, v] of sp.entries()) query[k] = v;
+      } catch {
+        // ignore
+      }
+    }
+
+    // param via "route:param"
+    const colonIdx = left.indexOf(":");
+    if (colonIdx >= 0) {
+      const name = left.slice(0, colonIdx).trim();
+      const param = left.slice(colonIdx + 1).trim();
+      return { name, param, query, raw };
+    }
+
+    return { name: left.trim(), param: "", query, raw };
   }
 
   function setHash(route) {
@@ -26,35 +60,72 @@ export function createRouter({ navEl, titleEl, subEl, actionsEl, viewEl }) {
     window.location.hash = encodeURIComponent(r);
   }
 
-  function renderRoute(routeRaw) {
-    // routeRaw kan være "sprøyting" eller "spr%C3%B8yting"
-    const decoded = safeDecode(routeRaw).trim();
-    const raw = String(routeRaw || "").trim();
+  function renderUnknown(routeInfo) {
+    currentRoute = routeInfo.raw || "";
+    if (titleEl) titleEl.textContent = "Ukjent side";
+    if (subEl) subEl.textContent = routeInfo.raw || "";
+    if (actionsEl) actionsEl.innerHTML = "";
+    if (viewEl) {
+      viewEl.innerHTML = `
+        <div class="notice">
+          <b>Ukjent side:</b> ${escapeHtml(routeInfo.raw || "")}<br/>
+          <span class="muted" style="font-size:12px;">
+            Tips: prøv å åpne siden fra menyen igjen.
+          </span>
+        </div>
+      `;
+    }
+  }
 
-    // prøv decoded først, ellers raw
-    const def = views.get(decoded) || views.get(raw);
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-    currentRoute = def ? (views.get(decoded) ? decoded : raw) : decoded || raw;
+  function renderRoute(routeStr) {
+    const info = parseRoute(routeStr);
+    currentRoute = info.raw;
+
+    // 1) Finn view: eksakt match først
+    let def = views.get(info.name);
+
+    // 2) Hvis ikke funnet: prøv hele strengen som nøkkel (bakoverkomp)
+    if (!def) def = views.get(info.raw);
+
+    if (!def) {
+      renderUnknown(info);
+      return;
+    }
+
+    // gi param/query til ctx uten å ødelegge resten
+    const ctxWithRoute = { ...ctx, route: { ...info }, routeParam: info.param, routeQuery: info.query };
 
     // Title/subtitle
     if (titleEl) titleEl.textContent = def?.title || "Ukjent side";
     if (subEl) {
       const sub = def?.subtitle;
-      subEl.textContent = typeof sub === "function" ? (sub(ctx.data) || "") : (sub || "");
+      subEl.textContent = typeof sub === "function" ? (sub(ctxWithRoute.data) || "") : (sub || "");
     }
 
     // Actions
     if (actionsEl) {
       actionsEl.innerHTML = "";
-      const acts = def?.actions ? def.actions(ctx) : [];
+      const acts = def?.actions ? def.actions(ctxWithRoute) : [];
       for (const a of acts || []) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = a.primary ? "btn primary" : "btn";
-        btn.textContent = a.label || "Knapp";
+        btn.textContent = a.label || "OK";
         btn.addEventListener("click", () => {
-          try { a.onClick?.(ctx); }
-          catch (e) { console.error(e); ctx.toast?.("Noe gikk galt."); }
+          try {
+            a.onClick?.(ctxWithRoute);
+          } catch (e) {
+            console.error(e);
+          }
         });
         actionsEl.appendChild(btn);
       }
@@ -62,27 +133,17 @@ export function createRouter({ navEl, titleEl, subEl, actionsEl, viewEl }) {
 
     // View
     if (viewEl) {
-      viewEl.innerHTML = "";
-      if (!def) {
-        viewEl.innerHTML = `
-          <div class="notice">
-            <b>Ukjent side:</b> ${escapeHtml(raw || decoded)}
-            <div class="muted" style="margin-top:6px; font-size:12px;">
-              Tips: prøv å åpne siden fra menyen igjen.
-            </div>
-          </div>
-        `;
-        return;
-      }
-
       try {
-        def.render(viewEl, { ...ctx });
+        viewEl.innerHTML = "";
+        def.render(viewEl, ctxWithRoute);
       } catch (e) {
         console.error(e);
         viewEl.innerHTML = `
           <div class="notice">
-            <b>Feil i view:</b> ${escapeHtml(def.title || decoded || raw)}
-            <div class="muted" style="margin-top:6px; font-size:12px;">Sjekk konsollen for detaljer.</div>
+            <b>Feil i siden:</b> ${escapeHtml(info.name)}<br/>
+            <div class="muted" style="font-size:12px; margin-top:6px;">
+              Se console (F12) for detaljer.
+            </div>
           </div>
         `;
       }
@@ -90,47 +151,36 @@ export function createRouter({ navEl, titleEl, subEl, actionsEl, viewEl }) {
   }
 
   function onHashChange() {
-    // her får vi alltid decoded route fra hash
-    const decodedRoute = normalizeHash(window.location.hash) || "dashboard";
-
-    // MEN: hvis browser/server har lagt inn encoded i hash, vil normalizeHash decode det.
-    // renderRoute tåler uansett begge varianter.
-    renderRoute(decodedRoute);
-  }
-
-  function registerView(route, def) {
-    const r = String(route || "").trim();
-    if (!r) return;
-    views.set(r, def);
-
-    // ekstra robust: registrer også encoded-varianten (spr%C3%B8yting)
-    try {
-      const enc = encodeURIComponent(r);
-      if (enc && enc !== r) views.set(enc, def);
-    } catch {}
-  }
-
-  function init(defaultRoute = "dashboard") {
     const route = normalizeHash(window.location.hash);
-    if (!route) setHash(defaultRoute);
-
-    window.addEventListener("hashchange", onHashChange);
-    onHashChange();
-  }
-
-  function rerender() {
-    const route = normalizeHash(window.location.hash) || "dashboard";
+    if (!route) return;
     renderRoute(route);
   }
 
-  function escapeHtml(s) {
-    return String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+  function registerView(route, def) {
+    views.set(String(route || "").trim(), def);
   }
 
-  return { registerView, init, setCtx, rerender, setHash };
+  function init(defaultRoute) {
+    window.addEventListener("hashchange", onHashChange);
+    const initial = normalizeHash(window.location.hash);
+    if (initial) renderRoute(initial);
+    else setHash(defaultRoute || "dashboard");
+  }
+
+  function rerender() {
+    const route = normalizeHash(window.location.hash);
+    if (!route) return;
+    renderRoute(route);
+  }
+
+  return {
+    registerView,
+    init,
+    rerender,
+    setCtx,
+    setHash,
+    get currentRoute() {
+      return currentRoute;
+    }
+  };
 }
