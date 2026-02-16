@@ -5,20 +5,252 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0a1a12" />
   <title>Farmapp</title>
+  <style>
+    :root{
+      --bg:#07150f;
+      --card:#0f241a;
+      --text:#e9fff5;
+      --muted:#9fc7b6;
+      --line:#1f3f30;
+
+      --accent:#18c46c;
+      --accent2:#0ea85a;
+      --danger:#ff5c5c;
+
+      --radius:18px;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    *{ box-sizing:border-box; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; }
+    body{
+      margin:0;
+      background: radial-gradient(1200px 800px at 30% 0%, #0b2519 0%, var(--bg) 55%);
+      color:var(--text);
+      min-height:100vh;
+    }
+    .app{
+      display:grid;
+      grid-template-columns: 250px 1fr;
+      min-height:100vh;
+    }
+    aside{
+      border-right:1px solid var(--line);
+      padding:14px;
+      background: rgba(0,0,0,.18);
+      backdrop-filter: blur(8px);
+    }
+    header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:14px;
+      border-bottom:1px solid var(--line);
+      background: rgba(0,0,0,.10);
+      backdrop-filter: blur(8px);
+      position:sticky;
+      top:0;
+      z-index:10;
+    }
+    main{
+      display:flex;
+      flex-direction:column;
+      min-width:0;
+    }
+    .brand{
+      font-weight:900;
+      letter-spacing:.2px;
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    .brand small{ color:var(--muted); font-weight:700; }
+    .pill{
+      font-size:12px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.08);
+      color: var(--text);
+      white-space:nowrap;
+    }
+    #nav{
+      display:grid;
+      gap:8px;
+      margin-top:10px;
+    }
+    #nav button{
+      border-radius:14px;
+      padding:10px 12px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      color:var(--text);
+      font-weight:800;
+      text-align:left;
+      cursor:pointer;
+    }
+    #nav button:hover{ background: rgba(255,255,255,.10); }
+
+    .content{
+      padding:14px;
+      display:grid;
+      gap:12px;
+    }
+    .card{
+      background: rgba(0,0,0,.18);
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .notice{
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: var(--radius);
+      padding: 12px;
+      color: var(--text);
+    }
+    .muted{ color:var(--muted); }
+
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.08);
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+      justify-content:flex-start;
+    }
+    .btn.primary{
+      border-color: rgba(24,196,108,.55);
+      background: rgba(24,196,108,.10);
+    }
+    .btn.danger{
+      border-color: rgba(255,92,92,.55);
+      background: rgba(255,92,92,.10);
+    }
+    .btn:disabled{ opacity:.6; cursor:not-allowed; }
+
+    /* Router header */
+    .viewTitles{
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    #viewTitle{ font-weight:1000; font-size:16px; }
+    #viewSub{ color:var(--muted); font-size:12px; }
+
+    /* Actions */
+    #actions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+
+    /* Mobile */
+    @media (max-width: 860px){
+      .app{ grid-template-columns: 1fr; }
+      aside{ border-right:none; border-bottom:1px solid var(--line); }
+      #nav{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+
+    /* Modal base (ui.js bruker disse klassene) */
+    .ui-backdrop{
+      position:fixed; inset:0;
+      background: rgba(0,0,0,.55);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+      z-index:9999;
+    }
+    .ui-modal{
+      width:min(520px, 100%);
+      background: #0f241a;
+      border:1px solid rgba(255,255,255,.14);
+      border-radius: 18px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.55);
+      overflow:hidden;
+    }
+    .ui-modal-head{
+      padding:14px;
+      border-bottom:1px solid rgba(255,255,255,.10);
+    }
+    .ui-modal-title{ font-weight:1000; }
+    .ui-modal-sub{ color:var(--muted); font-size:12px; margin-top:4px; line-height:1.35; }
+    .ui-modal-body{ padding:14px; display:grid; gap:10px; }
+    .ui-field{ display:grid; gap:6px; }
+    .ui-label{ color:var(--muted); font-size:12px; font-weight:800; }
+    .ui-input, .ui-textarea{
+      width:100%;
+      padding:12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.16);
+      background:#0f1720;
+      color:var(--text);
+      outline:none;
+    }
+    .ui-textarea{ min-height:160px; resize:vertical; }
+    .ui-actions{
+      display:flex; gap:10px; justify-content:flex-end;
+      padding:14px;
+      border-top:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.10);
+    }
+    .ui-btn{
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.08);
+      color:var(--text);
+      font-weight:1000;
+      cursor:pointer;
+    }
+    .ui-btn.primary{
+      border-color: rgba(24,196,108,.55);
+      background: rgba(24,196,108,.12);
+    }
+    .ui-small{ color:var(--muted); font-size:12px; }
+    .toast{
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      padding: 10px 12px;
+      border-radius: 999px;
+      background: rgba(0,0,0,.75);
+      border: 1px solid rgba(255,255,255,.18);
+      color: #fff;
+      font-weight: 900;
+      z-index: 10000;
+      max-width: min(520px, calc(100vw - 24px));
+      text-align:center;
+    }
+  </style>
 </head>
-
 <body>
-  <!-- Appen tegner UI selv. Det viktige er at disse ID-ene finnes. -->
-  <div id="pillStatus">Starter…</div>
-  <nav id="nav"></nav>
-  <h1 id="viewTitle"></h1>
-  <div id="viewSub"></div>
-  <div id="actions"></div>
-  <main id="view"></main>
+  <div class="app">
+    <aside>
+      <div class="brand">
+        Farmapp
+        <small id="pillStatus" class="pill">Starter…</small>
+      </div>
+      <div id="nav"></div>
+    </aside>
 
-  <script type="module">
-    import { boot } from "./modules/app.js?v=" + Date.now(); // cache-bust
-    boot();
-  </script>
+    <main>
+      <header>
+        <div class="viewTitles">
+          <div id="viewTitle">Starter…</div>
+          <div id="viewSub"></div>
+        </div>
+        <div id="actions"></div>
+      </header>
+
+      <div class="content" id="view"></div>
+    </main>
+  </div>
+
+  <script type="module" src="./modules/main.js"></script>
 </body>
 </html>
