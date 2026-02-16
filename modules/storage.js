@@ -1,81 +1,55 @@
-
-// modules/storage.js
-// Ansvar: All lagring og henting av data
-// Ingen UI. Ingen DOM-manipulering.
-// Kun data.
-
-const APP_KEY = "farmapp_v1";
-
-// Standard datastruktur (kan utvides senere)
-const defaultData = {
-  version: 1,
-  created: new Date().toISOString(),
-  farm: {
-    name: "",
-    kommune: "",
-    areal: 0
-  },
-  skifter: [],
-  husdyr: [],
-  fertilizerLog: [],
-  plantProtectionLog: []
-};
-
-// =======================
-// HENT DATA
-// =======================
+const KEY = "farmapp_data_v1";
 
 export function loadData() {
   try {
-    const raw = localStorage.getItem(APP_KEY);
-    if (!raw) {
-      return structuredClone(defaultData);
-    }
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return null;
     return JSON.parse(raw);
-  } catch (err) {
-    console.error("Feil ved lasting av data:", err);
-    return structuredClone(defaultData);
+  } catch (e) {
+    console.error("loadData feil", e);
+    return null;
   }
 }
 
-// =======================
-// LAGRE DATA
-// =======================
-
 export function saveData(data) {
   try {
-    localStorage.setItem(APP_KEY, JSON.stringify(data));
+    localStorage.setItem(KEY, JSON.stringify(data));
     return true;
-  } catch (err) {
-    console.error("Feil ved lagring:", err);
+  } catch (e) {
+    console.error("saveData feil", e);
     return false;
   }
 }
 
-// =======================
-// RESET DATA
-// =======================
-
 export function resetData() {
-  localStorage.removeItem(APP_KEY);
-  return structuredClone(defaultData);
+  const empty = {
+    farm: { name: "", kommune: "", areal: 0 },
+    skifter: [],
+    plantProtectionLog: [],
+    fertilizerLog: [],
+    husdyr: [],
+    productions: {
+      husdyr: { enabled:false, sau:false, geit:false, melkeku:false, ammeku:false, ungdyrStorfe:false, purke:false, slaktegris:false, egg:false, slaktekylling:false, kalkun:false, hest:false },
+      grovfor: { enabled:false, eng:false, beite:false, forplan:false, lager:false },
+      fruktGront: { enabled:false, rabarbra:false, potet:false, fruktBaer:false, rot:false, kal:false, bladLok:false }
+    }
+  };
+  try { localStorage.setItem(KEY, JSON.stringify(empty)); } catch {}
+  return empty;
 }
-
-// =======================
-// EKSPORT / IMPORT
-// =======================
 
 export function exportData() {
-  return JSON.stringify(loadData(), null, 2);
+  const d = loadData();
+  return JSON.stringify(d ?? resetData(), null, 2);
 }
 
-export function importData(jsonString) {
+export function importData(jsonText) {
   try {
-    const parsed = JSON.parse(jsonString);
-    saveData(parsed);
+    const obj = JSON.parse(String(jsonText || ""));
+    localStorage.setItem(KEY, JSON.stringify(obj));
     return true;
-  } catch (err) {
-    console.error("Import feilet:", err);
+  } catch (e) {
+    console.error("importData feil", e);
     return false;
   }
 }
